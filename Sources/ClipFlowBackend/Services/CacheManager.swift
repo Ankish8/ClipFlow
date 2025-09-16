@@ -3,7 +3,8 @@ import ClipFlowCore
 
 // MARK: - Cache Manager
 
-public actor CacheManager {
+@MainActor
+public class CacheManager {
     public static let shared = CacheManager()
 
     private var itemCache: [UUID: CachedItem] = [:]
@@ -196,7 +197,7 @@ private struct CachedItem {
 
 // MARK: - Cache Statistics
 
-public struct CacheStatistics {
+public struct CacheStatistics: Sendable {
     public let itemCount: Int
     public let collectionCount: Int
     public let memoryUsageBytes: Int64

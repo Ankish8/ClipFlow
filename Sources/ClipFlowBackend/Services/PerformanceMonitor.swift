@@ -3,7 +3,8 @@ import os
 
 // MARK: - Performance Monitor
 
-public actor PerformanceMonitor {
+@MainActor
+public class PerformanceMonitor {
     public static let shared = PerformanceMonitor()
 
     private var metrics: [String: [PerformanceMetric]] = [:]
@@ -129,13 +130,13 @@ public actor PerformanceMonitor {
         await checkPerformanceAlerts(metric: metric)
 
         // Log metric
-        logger.debug("Operation '\(operation)' completed in \(duration * 1000, specifier: "%.1f")ms, memory: \(memoryUsage) bytes")
+        logger.debug("Operation '\(operation)' completed in \(String(format: "%.1f", duration * 1000))ms, memory: \(memoryUsage) bytes")
     }
 
     private func checkPerformanceAlerts(metric: PerformanceMetric) async {
         // Duration alert
         if metric.duration > alertThreshold {
-            logger.warning("⚠️ Slow operation: '\(metric.operation)' took \(metric.duration * 1000, specifier: "%.1f")ms")
+            logger.warning("⚠️ Slow operation: '\(metric.operation)' took \(String(format: "%.1f", metric.duration * 1000))ms")
         }
 
         // Memory alert
@@ -313,8 +314,8 @@ public actor PerformanceMonitor {
         logger.info("""
         📊 Performance Summary:
         Total Operations: \(stats.totalOperations)
-        Average Duration: \(stats.averageDuration * 1000, specifier: "%.1f")ms
-        Success Rate: \(stats.successRate * 100, specifier: "%.1f")%
+        Average Duration: \(String(format: "%.1f", stats.averageDuration * 1000))ms
+        Success Rate: \(String(format: "%.1f", stats.successRate * 100))%
         Memory Footprint: \(memoryFootprint / 1024)KB
         """)
     }
@@ -326,7 +327,8 @@ public actor PerformanceMonitor {
         let machineMirror = Mirror(reflecting: systemInfo.machine)
         let machine = machineMirror.children.reduce("") { result, element in
             guard let value = element.value as? Int8, value != 0 else { return result }
-            return result + String(UnicodeScalar(UInt8(value))!)
+            let scalar = UnicodeScalar(UInt8(value))
+            return result + String(scalar)
         }
 
         return SystemInfo(

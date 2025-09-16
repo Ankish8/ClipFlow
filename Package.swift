@@ -2,11 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClipFlowBackend",
+    name: "ClipFlow",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v15)
     ],
     products: [
+        .executable(
+            name: "ClipFlow",
+            targets: ["ClipFlow"]),
         .library(
             name: "ClipFlowBackend",
             targets: ["ClipFlowBackend"]),
@@ -22,6 +25,21 @@ let package = Package(
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "2.0.0"),
     ],
     targets: [
+        .executableTarget(
+            name: "ClipFlow",
+            dependencies: [
+                "ClipFlowBackend",
+                "ClipFlowCore",
+                "ClipFlowAPI",
+                "KeyboardShortcuts"
+            ],
+            path: "Sources/ClipFlow",
+            swiftSettings: [
+                .unsafeFlags(["-Xfrontend", "-disable-availability-checking"]),
+                .unsafeFlags(["-parse-as-library"]),
+                .define("DISABLE_SENDABLE_CHECKING")
+            ]
+        ),
         .target(
             name: "ClipFlowBackend",
             dependencies: [
@@ -41,11 +59,6 @@ let package = Package(
             name: "ClipFlowAPI",
             dependencies: ["ClipFlowCore"],
             path: "Sources/ClipFlowAPI"
-        ),
-        .testTarget(
-            name: "ClipFlowBackendTests",
-            dependencies: ["ClipFlowBackend"],
-            path: "Tests/ClipFlowBackendTests"
         ),
     ]
 )

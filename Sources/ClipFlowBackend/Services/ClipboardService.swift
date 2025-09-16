@@ -6,7 +6,8 @@ import ClipFlowAPI
 
 // MARK: - Clipboard Service Implementation
 
-public actor ClipboardService: ClipboardServiceAPI {
+@MainActor
+public class ClipboardService: ClipboardServiceAPI {
     public static let shared = ClipboardService()
 
     // Dependencies
@@ -41,15 +42,15 @@ public actor ClipboardService: ClipboardServiceAPI {
 
     // MARK: - Publishers
 
-    public nonisolated var itemUpdates: AnyPublisher<ClipboardItem, Never> {
+    public var itemUpdates: AnyPublisher<ClipboardItem, Never> {
         _itemUpdates.eraseToAnyPublisher()
     }
 
-    public nonisolated var errors: AnyPublisher<ClipboardError, Never> {
+    public var errors: AnyPublisher<ClipboardError, Never> {
         _errors.eraseToAnyPublisher()
     }
 
-    public nonisolated var statusUpdates: AnyPublisher<MonitorStatus, Never> {
+    public var statusUpdates: AnyPublisher<MonitorStatus, Never> {
         _statusUpdates.eraseToAnyPublisher()
     }
 
@@ -443,7 +444,7 @@ public actor ClipboardService: ClipboardServiceAPI {
     private func formatJSON(_ text: String) -> String {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data),
-              let formatted = try? JSONSerialization.data(with: json, options: [.prettyPrinted, .sortedKeys]),
+              let formatted = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
               let formattedString = String(data: formatted, encoding: .utf8) else {
             return text
         }

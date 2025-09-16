@@ -3,13 +3,13 @@ import AppKit
 
 // MARK: - Core ClipboardItem Model
 
-public struct ClipboardItem: Codable, Identifiable, Hashable {
+public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
     public let id: UUID
     public let content: ClipboardContent
     public let metadata: ItemMetadata
     public let source: ItemSource
-    public let timestamps: ItemTimestamps
-    public let security: SecurityMetadata
+    public var timestamps: ItemTimestamps
+    public var security: SecurityMetadata
     public var tags: Set<String>
     public var collectionIds: Set<UUID>
     public var isFavorite: Bool
@@ -53,7 +53,7 @@ public struct ClipboardItem: Codable, Identifiable, Hashable {
 
 // MARK: - ClipboardContent Types
 
-public enum ClipboardContent: Codable, Hashable {
+public enum ClipboardContent: Codable, Hashable, Sendable {
     case text(TextContent)
     case richText(RichTextContent)
     case image(ImageContent)
@@ -102,7 +102,7 @@ public enum ClipboardContent: Codable, Hashable {
     }
 }
 
-public struct TextContent: Codable, Hashable {
+public struct TextContent: Codable, Hashable, Sendable {
     public let plainText: String
     public let encoding: String
     public let language: String?
@@ -127,7 +127,7 @@ public struct TextContent: Codable, Hashable {
     }
 }
 
-public struct RichTextContent: Codable, Hashable {
+public struct RichTextContent: Codable, Hashable, Sendable {
     public let rtfData: Data
     public let htmlString: String?
     public let attributedStringData: Data
@@ -146,7 +146,7 @@ public struct RichTextContent: Codable, Hashable {
     }
 }
 
-public struct ImageContent: Codable, Hashable {
+public struct ImageContent: Codable, Hashable, Sendable {
     public let data: Data
     public let format: ImageFormat
     public let dimensions: CGSize
@@ -171,11 +171,11 @@ public struct ImageContent: Codable, Hashable {
     }
 }
 
-public enum ImageFormat: String, Codable, CaseIterable {
+public enum ImageFormat: String, Codable, CaseIterable, Sendable {
     case png, jpeg, gif, tiff, bmp, heif, webp
 }
 
-public struct FileContent: Codable, Hashable {
+public struct FileContent: Codable, Hashable, Sendable {
     public let urls: [URL]
     public let fileName: String
     public let fileSize: Int64
@@ -197,7 +197,7 @@ public struct FileContent: Codable, Hashable {
     }
 }
 
-public struct LinkContent: Codable, Hashable {
+public struct LinkContent: Codable, Hashable, Sendable {
     public let url: URL
     public let title: String?
     public let description: String?
@@ -219,7 +219,7 @@ public struct LinkContent: Codable, Hashable {
     }
 }
 
-public struct CodeContent: Codable, Hashable {
+public struct CodeContent: Codable, Hashable, Sendable {
     public let code: String
     public let language: String
     public let syntaxHighlightedData: Data?
@@ -238,7 +238,7 @@ public struct CodeContent: Codable, Hashable {
     }
 }
 
-public struct ColorContent: Codable, Hashable {
+public struct ColorContent: Codable, Hashable, Sendable {
     public let red: Double
     public let green: Double
     public let blue: Double
@@ -265,7 +265,7 @@ public struct ColorContent: Codable, Hashable {
     }
 }
 
-public struct SnippetContent: Codable, Hashable {
+public struct SnippetContent: Codable, Hashable, Sendable {
     public let id: UUID
     public let title: String
     public let content: String
@@ -293,7 +293,7 @@ public struct SnippetContent: Codable, Hashable {
     }
 }
 
-public struct MultiContent: Codable, Hashable {
+public struct MultiContent: Codable, Hashable, Sendable {
     public let items: [ClipboardContent]
     public let description: String
 
@@ -303,7 +303,7 @@ public struct MultiContent: Codable, Hashable {
     }
 }
 
-public struct Placeholder: Codable, Hashable {
+public struct Placeholder: Codable, Hashable, Sendable {
     public let id: String
     public let name: String
     public let defaultValue: String?
@@ -325,6 +325,6 @@ public struct Placeholder: Codable, Hashable {
     }
 }
 
-public enum PlaceholderType: String, Codable, CaseIterable {
+public enum PlaceholderType: String, Codable, CaseIterable, Sendable {
     case text, date, time, number, email, url, selection
 }

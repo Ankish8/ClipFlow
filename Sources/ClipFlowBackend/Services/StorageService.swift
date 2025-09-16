@@ -3,7 +3,8 @@ import ClipFlowCore
 
 // MARK: - Storage Service
 
-public actor StorageService {
+@MainActor
+public class StorageService {
     private let databaseManager: DatabaseManager
     private let cacheManager: CacheManager
     private let fileManager: FileManager
@@ -243,13 +244,10 @@ public actor StorageService {
 
     private func itemExists(hash: String) async -> Bool {
         do {
-            let items = try await databaseManager.read { db in
-                try db.prepare(sql: "SELECT COUNT(*) FROM clipboard_items WHERE hash = ? AND is_deleted = 0",
-                             arguments: [hash]).map { row in
-                    row[0] as! Int
-                }
+            let count = try await databaseManager.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM clipboard_items WHERE hash = ? AND is_deleted = 0", arguments: [hash]) ?? 0
             }
-            return (items.first ?? 0) > 0
+            return count > 0
         } catch {
             return false
         }
@@ -267,7 +265,7 @@ public actor StorageService {
             contentData = imageContent.data
         case .richText(let richContent):
             contentData = richContent.rtfData
-        case .file(let fileContent):
+        case .file(_):
             // For files, we might store metadata or thumbnails
             contentData = nil
         default:

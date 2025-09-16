@@ -4,7 +4,8 @@ import ClipFlowCore
 
 // MARK: - Database Manager
 
-public actor DatabaseManager {
+@MainActor
+public class DatabaseManager {
     private let dbQueue: DatabaseQueue
     private let migrator: DatabaseMigrator
 
@@ -169,7 +170,7 @@ public actor DatabaseManager {
 
     public func saveItem(_ item: ClipboardItem) async throws {
         try await write { db in
-            let record = ClipboardItemRecord(from: item)
+            var record = ClipboardItemRecord(from: item)
             try record.insert(db)
 
             // Update FTS index
@@ -186,7 +187,7 @@ public actor DatabaseManager {
 
     public func updateItem(_ item: ClipboardItem) async throws {
         try await write { db in
-            let record = ClipboardItemRecord(from: item)
+            var record = ClipboardItemRecord(from: item)
             try record.update(db)
 
             // Update FTS index
@@ -275,7 +276,7 @@ public actor DatabaseManager {
 
     public func saveCollection(_ collection: Collection) async throws {
         try await write { db in
-            let record = CollectionRecord(from: collection)
+            var record = CollectionRecord(from: collection)
             try record.insert(db)
 
             // Add collection items
@@ -294,11 +295,10 @@ public actor DatabaseManager {
             var collections: [Collection] = []
 
             for record in records {
-                let itemIds = try Set(db.prepare(sql: """
+                let itemIdStrings = try String.fetchAll(db, sql: """
                     SELECT item_id FROM collection_items WHERE collection_id = ?
-                """, arguments: [record.id]).map { row in
-                    UUID(uuidString: row[0])!
-                })
+                """, arguments: [record.id])
+                let itemIds = Set(itemIdStrings.compactMap { UUID(uuidString: $0) })
 
                 var collection = try record.toCollection()
                 collection.itemIds = itemIds

@@ -3,7 +3,7 @@ import CryptoKit
 
 // MARK: - Item Metadata
 
-public struct ItemMetadata: Codable, Hashable {
+public struct ItemMetadata: Codable, Hashable, Sendable {
     public let size: Int64
     public let hash: String
     public let preview: String?
@@ -218,7 +218,7 @@ public struct ItemMetadata: Codable, Hashable {
 
 // MARK: - Source Information
 
-public struct ItemSource: Codable, Hashable {
+public struct ItemSource: Codable, Hashable, Sendable {
     public let applicationBundleID: String?
     public let applicationName: String?
     public let applicationIcon: Data?
@@ -229,17 +229,17 @@ public struct ItemSource: Codable, Hashable {
         applicationBundleID: String? = nil,
         applicationName: String? = nil,
         applicationIcon: Data? = nil,
-        deviceID: String = Self.currentDeviceID(),
-        deviceName: String = Self.currentDeviceName()
+        deviceID: String? = nil,
+        deviceName: String? = nil
     ) {
         self.applicationBundleID = applicationBundleID
         self.applicationName = applicationName
         self.applicationIcon = applicationIcon
-        self.deviceID = deviceID
-        self.deviceName = deviceName
+        self.deviceID = deviceID ?? Self.currentDeviceID()
+        self.deviceName = deviceName ?? Self.currentDeviceName()
     }
 
-    private static func currentDeviceID() -> String {
+    internal static func currentDeviceID() -> String {
         if let uuid = IORegistryEntryCreateCFProperty(
             IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/"),
             "IOPlatformUUID" as CFString,
@@ -250,14 +250,14 @@ public struct ItemSource: Codable, Hashable {
         return UUID().uuidString
     }
 
-    private static func currentDeviceName() -> String {
+    internal static func currentDeviceName() -> String {
         Host.current().localizedName ?? "Unknown Mac"
     }
 }
 
 // MARK: - Timestamps
 
-public struct ItemTimestamps: Codable, Hashable {
+public struct ItemTimestamps: Codable, Hashable, Sendable {
     public let createdAt: Date
     public var lastAccessedAt: Date?
     public var modifiedAt: Date?
@@ -290,7 +290,7 @@ public struct ItemTimestamps: Codable, Hashable {
 
 // MARK: - Security Metadata
 
-public struct SecurityMetadata: Codable, Hashable {
+public struct SecurityMetadata: Codable, Hashable, Sendable {
     public let isEncrypted: Bool
     public let isSensitive: Bool
     public let encryptionKeyID: String?
@@ -347,6 +347,6 @@ public struct SecurityMetadata: Codable, Hashable {
     }
 }
 
-public enum AccessControl: String, Codable, CaseIterable {
+public enum AccessControl: String, Codable, CaseIterable, Sendable {
     case `public`, `private`, shared, restricted
 }

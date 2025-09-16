@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Collection Model
 
-public struct Collection: Codable, Identifiable, Hashable {
+public struct Collection: Codable, Identifiable, Hashable, Sendable {
     public let id: UUID
     public var name: String
     public var description: String?
@@ -74,7 +74,7 @@ public struct Collection: Codable, Identifiable, Hashable {
 
 // MARK: - Share Settings
 
-public struct ShareSettings: Codable, Hashable {
+public struct ShareSettings: Codable, Hashable, Sendable {
     public let shareID: String
     public var permissions: Set<Permission>
     public var expiresAt: Date?
@@ -149,7 +149,7 @@ public struct ShareSettings: Codable, Hashable {
     }
 }
 
-public enum Permission: String, Codable, CaseIterable {
+public enum Permission: String, Codable, CaseIterable, Sendable {
     case read = "read"
     case write = "write"
     case delete = "delete"
@@ -187,7 +187,7 @@ public enum Permission: String, Codable, CaseIterable {
 
 // MARK: - Collection Statistics
 
-public struct CollectionStatistics: Codable {
+public struct CollectionStatistics: Codable, Sendable {
     public let totalCollections: Int
     public let totalItems: Int
     public let totalSharedCollections: Int

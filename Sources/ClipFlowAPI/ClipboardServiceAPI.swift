@@ -4,6 +4,7 @@ import ClipFlowCore
 
 // MARK: - Clipboard Service API Protocol
 
+@MainActor
 public protocol ClipboardServiceAPI {
 
     // MARK: Core Operations
@@ -85,7 +86,7 @@ public protocol ClipboardServiceAPI {
 
 // MARK: - Filter Types
 
-public struct HistoryFilter {
+public struct HistoryFilter: Sendable {
     public let contentTypes: [String]?
     public let applications: [String]?
     public let dateRange: ClosedRange<Date>?
@@ -113,7 +114,7 @@ public struct HistoryFilter {
     }
 }
 
-public enum SearchScope {
+public enum SearchScope: Sendable {
     case all
     case content
     case metadata
@@ -122,7 +123,7 @@ public enum SearchScope {
     case collections([UUID])
 }
 
-public enum TransformAction: String, CaseIterable {
+public enum TransformAction: String, CaseIterable, Sendable, Codable {
     case toUpperCase = "uppercase"
     case toLowerCase = "lowercase"
     case removeFormatting = "plain"

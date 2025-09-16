@@ -5,7 +5,8 @@ import ClipFlowCore
 
 // MARK: - Security Service
 
-public actor SecurityService {
+@MainActor
+public class SecurityService {
     public static let shared = SecurityService()
 
     private let keychain = KeychainService()

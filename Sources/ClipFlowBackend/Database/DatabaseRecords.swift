@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import ClipFlowCore
+import ClipFlowAPI
 
 // MARK: - ClipboardItemRecord
 
@@ -307,12 +308,12 @@ public enum AutomationTrigger: Codable {
 public struct AutomationCondition: Codable {
     public let type: ConditionType
     public let value: String
-    public let operator: ComparisonOperator
+    public let comparisonOperator: ComparisonOperator
 
     public init(type: ConditionType, value: String, operator: ComparisonOperator) {
         self.type = type
         self.value = value
-        self.operator = `operator`
+        self.comparisonOperator = `operator`
     }
 }
 
@@ -332,10 +333,6 @@ public enum AutomationAction: Codable {
     case export(format: ExportFormat)
 }
 
-public enum TransformAction: String, Codable {
-    case toUpperCase, toLowerCase, removeFormatting,
-         extractURLs, extractEmails, base64Encode
-}
 
 public enum ExportFormat: String, Codable {
     case json, csv, txt, rtf, html

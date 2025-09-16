@@ -1,0 +1,1 @@
+- never mention co-authored by claude or any mention of claude while commiting to github

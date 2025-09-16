@@ -3,10 +3,13 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 import ClipFlowCore
+import ClipFlowAPI
+import NaturalLanguage
 
 // MARK: - Clipboard Monitor Service
 
-public actor ClipboardMonitorService {
+@MainActor
+public class ClipboardMonitorService {
     // MARK: - Properties
 
     private var timer: Timer?
@@ -32,15 +35,15 @@ public actor ClipboardMonitorService {
 
     // MARK: - Public Publishers
 
-    public nonisolated var itemUpdates: AnyPublisher<ClipboardItem, Never> {
+    public var itemUpdates: AnyPublisher<ClipboardItem, Never> {
         itemSubject.eraseToAnyPublisher()
     }
 
-    public nonisolated var errors: AnyPublisher<ClipboardError, Never> {
+    public var errors: AnyPublisher<ClipboardError, Never> {
         errorSubject.eraseToAnyPublisher()
     }
 
-    public nonisolated var status: AnyPublisher<MonitorStatus, Never> {
+    public var status: AnyPublisher<MonitorStatus, Never> {
         statusSubject.eraseToAnyPublisher()
     }
 
@@ -81,9 +84,11 @@ public actor ClipboardMonitorService {
     public func stopMonitoring() async {
         guard isMonitoring else { return }
 
+        let timerToInvalidate = timer
+        timer = nil
+
         await MainActor.run {
-            timer?.invalidate()
-            timer = nil
+            timerToInvalidate?.invalidate()
         }
 
         isMonitoring = false
@@ -102,7 +107,10 @@ public actor ClipboardMonitorService {
             detectionErrors: detectionErrors,
             lastDetectionTime: lastDetectionTime,
             isMonitoring: isMonitoring,
-            pollingInterval: pollingInterval
+            pollingInterval: pollingInterval,
+            averageProcessingTime: 0.0, // Will be provided by PerformanceMonitor
+            memoryUsage: 0, // Will be provided by StorageService
+            cacheHitRate: 0.0 // Will be provided by CacheManager
         )
     }
 
@@ -118,7 +126,8 @@ public actor ClipboardMonitorService {
 
         do {
             // Check for privacy compliance (macOS Sequoia)
-            if !await checkPrivacyCompliance(pasteboard) {
+            let isCompliant = await checkPrivacyCompliance(pasteboard)
+            if !isCompliant {
                 return nil
             }
 
@@ -179,7 +188,7 @@ public actor ClipboardMonitorService {
         let content: ClipboardContent?
 
         // Priority order for content detection
-        if types.contains(.png) || types.contains(.jpeg) || types.contains(.tiff) {
+        if types.contains(.png) || types.contains(.tiff) {
             content = await processImageContent(pasteboard)
         } else if types.contains(.fileURL) {
             content = await processFileContent(pasteboard)
@@ -267,9 +276,6 @@ public actor ClipboardMonitorService {
         if let pngData = pasteboard.data(forType: .png) {
             imageData = pngData
             format = .png
-        } else if let jpegData = pasteboard.data(forType: .jpeg) {
-            imageData = jpegData
-            format = .jpeg
         } else if let tiffData = image.tiffRepresentation {
             imageData = tiffData
             format = .tiff
@@ -304,7 +310,7 @@ public actor ClipboardMonitorService {
         let fileURLs = urls.filter { $0.isFileURL }
         guard !fileURLs.isEmpty else { return nil }
 
-        let totalSize = fileURLs.reduce(0) { sum, url in
+        let totalSize = fileURLs.reduce(Int64(0)) { sum, url in
             do {
                 let resources = try url.resourceValues(forKeys: [.fileSizeKey])
                 return sum + Int64(resources.fileSize ?? 0)
@@ -348,7 +354,7 @@ public actor ClipboardMonitorService {
     }
 
     private func processColorContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
-        guard let color = NSColor(pasteboard: pasteboard) else { return nil }
+        guard let color = NSColor(from: pasteboard) else { return nil }
         return .color(ColorContent(nsColor: color))
     }
 
@@ -382,7 +388,8 @@ public actor ClipboardMonitorService {
         let isSensitive = SecurityMetadata.detectSensitive(from: item.content)
 
         // Apply encryption if needed
-        let shouldEncrypt = isSensitive || await securityService.shouldEncrypt(item)
+        let shouldEncryptFromSecurity = await securityService.shouldEncrypt(item)
+        let shouldEncrypt = isSensitive || shouldEncryptFromSecurity
 
         if shouldEncrypt {
             // Encrypt the item (implementation would depend on SecurityService)
@@ -504,42 +511,8 @@ public actor ClipboardMonitorService {
 
 // MARK: - Supporting Types
 
-public enum MonitorStatus {
-    case stopped
-    case monitoring
-    case paused
-    case error(ClipboardError)
-}
 
-public enum ClipboardError: Error {
-    case accessDenied
-    case processingFailed(Error)
-    case unsupportedContent
-    case encryptionFailed
-    case storageFailed(Error)
-}
 
-public struct ClipboardStatistics {
-    public let totalItemsProcessed: Int
-    public let detectionErrors: Int
-    public let lastDetectionTime: Date?
-    public let isMonitoring: Bool
-    public let pollingInterval: TimeInterval
-
-    public init(
-        totalItemsProcessed: Int,
-        detectionErrors: Int,
-        lastDetectionTime: Date?,
-        isMonitoring: Bool,
-        pollingInterval: TimeInterval
-    ) {
-        self.totalItemsProcessed = totalItemsProcessed
-        self.detectionErrors = detectionErrors
-        self.lastDetectionTime = lastDetectionTime
-        self.isMonitoring = isMonitoring
-        self.pollingInterval = pollingInterval
-    }
-}
 
 // MARK: - String Extensions
 
