@@ -79,6 +79,9 @@ class OverlayManager: ObservableObject {
         let hostingView = NSHostingView(rootView: contentView)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
+        // Connect the view to the window for keyboard handling
+        overlayWindow?.setOverlayView(contentView)
+
         overlayWindow?.contentView = hostingView
 
         // Set up constraints

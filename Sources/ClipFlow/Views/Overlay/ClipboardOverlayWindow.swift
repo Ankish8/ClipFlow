@@ -4,6 +4,7 @@ import AppKit
 class ClipboardOverlayWindow: NSWindow {
     private var initialFrame: NSRect = .zero
     private var finalFrame: NSRect = .zero
+    private var overlayView: ClipboardOverlayView?
 
     init() {
         // Start with temporary frame - will be set properly in setupWindow
@@ -97,10 +98,39 @@ class ClipboardOverlayWindow: NSWindow {
         }
     }
 
+    func setOverlayView(_ view: ClipboardOverlayView) {
+        overlayView = view
+    }
+
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // Escape key
-            hideOverlay()
-        } else {
+        guard let overlayView = overlayView else {
+            super.keyDown(with: event)
+            return
+        }
+
+        switch event.keyCode {
+        case 53: // Escape
+            overlayView.closeOverlay()
+
+        case 36: // Enter/Return
+            overlayView.pasteCurrentSelection()
+
+        case 51, 117: // Delete/Backspace
+            overlayView.deleteCurrentSelection()
+
+        case 123: // Left arrow
+            overlayView.navigateLeft()
+
+        case 124: // Right arrow
+            overlayView.navigateRight()
+
+        case 18...26: // Number keys 1-9
+            let number = Int(event.keyCode) - 17 // Convert keycode to number (1-9)
+            if number >= 1 && number <= 9 {
+                overlayView.selectByNumber(number)
+            }
+
+        default:
             super.keyDown(with: event)
         }
     }
