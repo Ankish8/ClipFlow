@@ -235,15 +235,10 @@ public class ClipboardMonitorService {
             print("📁 Processing as pure file content")
             content = await processFileContent(pasteboard)
         } else if types.contains(.png) || types.contains(.tiff) {
-            // Handle images - check if they're files or pure images, but process only ONCE
+            // Handle images - ALWAYS process as images, regardless of whether they have fileURL
             NSLog("🔍 Checking .png/.tiff: \(types.contains(.png)) / \(types.contains(.tiff))")
-            if types.contains(.fileURL) {
-                print("📁 Image file detected - processing as file only")
-                content = await processFileContent(pasteboard)
-            } else {
-                print("🖼️ Processing as pure image content")
-                content = await processImageContent(pasteboard)
-            }
+            print("🖼️ Processing as image content (files or pure images)")
+            content = await processImageContent(pasteboard)
         } else if types.contains(.rtf) {
             NSLog("🔍 Checking .rtf: \(types.contains(.rtf))")
             print("📝 Processing as rich text content")

@@ -6,7 +6,11 @@ struct ClipboardCardView: View {
     let item: ClipboardItem
     let index: Int
     let isSelected: Bool
+    let viewModel: ClipboardViewModel
     @State private var isHovering = false
+    @State private var hoveredButton: String? = nil
+    @State private var isDeleting = false
+    @State private var cachedImagePath: String? = nil
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -32,7 +36,10 @@ struct ClipboardCardView: View {
                 .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
         )
         .scaleEffect(isSelected ? 1.02 : 1.0)
+        .scaleEffect(isDeleting ? 0.8 : 1.0)
         .offset(y: isHovering ? -1 : 0) // transform: translateY(-1px)
+        .offset(y: isDeleting ? -20 : 0)
+        .opacity(isDeleting ? 0 : 1)
         .shadow(
             color: colorScheme == .light ?
                 Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.05 : 0.0) : // rgba(0, 0, 0, 0.05)
@@ -50,6 +57,7 @@ struct ClipboardCardView: View {
             y: isHovering ? 1 : 0
         )
         .animation(.easeInOut(duration: 0.2), value: isSelected)
+        .animation(.easeInOut(duration: 0.3), value: isDeleting)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovering = hovering
@@ -70,8 +78,27 @@ struct ClipboardCardView: View {
                 }
         )
         .overlay(alignment: .topTrailing) {
-            if isHovering || isSelected {
+            if isHovering && !isDeleting {
                 quickActionButtons
+                    .contentShape(Rectangle())
+                    .onHover { hovering in
+                        // Keep the card hover state active when hovering over buttons
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            isHovering = hovering
+                        }
+                    }
+            }
+        }
+        .onAppear {
+            // Create temporary file for images asynchronously to avoid blocking main thread during drag
+            if case .image(let imageContent) = item.content {
+                Task.detached(priority: .utility) {
+                    if let tempPath = await createTemporaryImageFileAsync(from: imageContent) {
+                        await MainActor.run {
+                            cachedImagePath = tempPath
+                        }
+                    }
+                }
             }
         }
     }
@@ -122,19 +149,26 @@ struct ClipboardCardView: View {
     }
 
     private var cardHeader: some View {
-        HStack {
-            // Subtle content type badge
-            Text(contentTypeInfo.name.uppercased())
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(contentTypeInfo.color)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(contentTypeInfo.color.opacity(0.08))
-                )
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                // Subtle content type badge
+                Text(contentTypeInfo.name.uppercased())
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(contentTypeInfo.color)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(contentTypeInfo.color.opacity(0.08))
+                    )
 
-            Spacer()
+                Spacer()
+            }
+            
+            // Tag badges
+            if !item.tags.isEmpty {
+                tagBadgesView
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -234,6 +268,27 @@ struct ClipboardCardView: View {
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: item.timestamps.createdAt, relativeTo: Date())
     }
+    
+    private var tagBadgesView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Array(item.tags.sorted()), id: \.self) { tagName in
+                    TagBadgeView(tagName: tagName, tagColor: nil)
+                        .onTapGesture {
+                            // Handle tag tap - could filter by this tag
+                            handleTagTap(tagName)
+                        }
+                }
+            }
+            .padding(.horizontal, -2) // Compensate for card padding
+        }
+    }
+    
+    private func handleTagTap(_ tagName: String) {
+        // Notify view model to filter by this tag
+        // This will be implemented when we add tag filtering
+        print("Tag tapped: \(tagName)")
+    }
 
     private func formatFileSize(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
@@ -245,76 +300,86 @@ struct ClipboardCardView: View {
     // MARK: - Quick Actions
 
     private var quickActionButtons: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 8) {
             // Copy action
-            quickActionButton(icon: "doc.on.doc", action: copyItem)
-
+            quickActionButton(icon: "doc.on.doc", action: copyItem, color: .primary)
+            
             // Delete action
-            quickActionButton(icon: "trash", action: deleteItem)
-
+            quickActionButton(icon: "trash", action: deleteItem, color: .primary)
+            
             // Pin/Favorite action
-            quickActionButton(icon: "star", action: pinItem)
+            quickActionButton(icon: item.isFavorite ? "star.fill" : "star", action: pinItem, color: .primary)
+            
+            // Tag assignment action
+            quickActionButton(icon: "tag", action: assignTags, color: .blue)
         }
-        .padding(6)
+        .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.ultraThinMaterial)
-                .opacity(0.8)
+            RoundedRectangle(cornerRadius: 10)
+                .fill(colorScheme == .light ? 
+                    Color(.sRGB, red: 0.98, green: 0.98, blue: 0.99, opacity: 0.95) :
+                    Color(.sRGB, red: 0.15, green: 0.15, blue: 0.16, opacity: 0.95)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(colorScheme == .light ?
+                            Color(.sRGB, red: 0.85, green: 0.87, blue: 0.9, opacity: 0.8) :
+                            Color(.sRGB, red: 0.35, green: 0.35, blue: 0.36, opacity: 0.8),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(
+                    color: colorScheme == .light ?
+                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.1) :
+                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.3),
+                    radius: 4,
+                    x: 0,
+                    y: 2
+                )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .padding(6)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(8)
     }
 
-    private func quickActionButton(icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func quickActionButton(icon: String, action: @escaping () -> Void, color: Color) -> some View {
+        Button(action: {
+            // Add haptic feedback
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            action()
+        }) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white.opacity(0.9))
-                .frame(width: 20, height: 20)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(colorScheme == .light ? color : color.opacity(0.9))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.white.opacity(0.15))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .onHover { hovering in
-            // Add slight scale effect on hover
-        }
+        .buttonStyle(QuickActionButtonStyle(color: color, colorScheme: colorScheme))
     }
 
     // MARK: - Action Methods
 
     private func copyItem() {
-        // Copy the item to clipboard again (useful for re-copying)
-        NSPasteboard.general.clearContents()
-        switch item.content {
-        case .text(let textContent):
-            NSPasteboard.general.setString(textContent.plainText, forType: .string)
-        case .richText(let richContent):
-            NSPasteboard.general.setString(richContent.plainTextFallback, forType: .string)
-        case .image(let imageContent):
-            NSPasteboard.general.setData(imageContent.data, forType: .png)
-        default:
-            break
-        }
+        viewModel.pasteItem(item)
     }
 
     private func deleteItem() {
-        // This will need to be connected to the ViewModel
-        // For now, we'll post a notification
-        NotificationCenter.default.post(
-            name: .deleteClipboardItem,
-            object: item
-        )
+        // Trigger delete animation
+        withAnimation(.easeInOut(duration: 0.3)) {
+            isDeleting = true
+        }
+        
+        // Perform actual delete after animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            viewModel.deleteItem(item)
+        }
     }
 
     private func pinItem() {
-        // This will need to be connected to the ViewModel for pinning
-        NotificationCenter.default.post(
-            name: .pinClipboardItem,
-            object: item
-        )
+        viewModel.toggleFavorite(for: item)
+    }
+    
+    private func assignTags() {
+        viewModel.assignTags(to: item)
     }
 
     // MARK: - Drag and Drop Support
@@ -326,8 +391,8 @@ struct ClipboardCardView: View {
         case .richText(let richContent):
             return richContent.plainTextFallback
         case .image(_):
-            // For images, we'll provide a description that could be dropped as text
-            return "[Image: \(item.metadata.preview ?? "Untitled")]"
+            // For images, use cached temporary file path or fallback to description
+            return cachedImagePath ?? "[Image: \(item.metadata.preview ?? "Untitled")]"
         case .file(let fileContent):
             // For files, return the file paths as text
             return fileContent.urls.map { $0.path }.joined(separator: "\n")
@@ -359,6 +424,42 @@ struct ClipboardCardView: View {
             }
             return "Multiple items"
         }
+    }
+
+    private func createTemporaryImageFile(from imageContent: ImageContent) -> String? {
+        do {
+            // Create temporary directory
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileName = "\(item.id.uuidString).\(imageContent.format.rawValue)"
+            let tempURL = tempDir.appendingPathComponent(tempFileName)
+
+            // Write image data to temporary file
+            try imageContent.data.write(to: tempURL)
+
+            return tempURL.path
+        } catch {
+            print("Failed to create temporary image file: \(error)")
+            return nil
+        }
+    }
+
+    private func createTemporaryImageFileAsync(from imageContent: ImageContent) async -> String? {
+        return await Task(priority: .utility) {
+            do {
+                // Create temporary directory
+                let tempDir = FileManager.default.temporaryDirectory
+                let tempFileName = "\(item.id.uuidString).\(imageContent.format.rawValue)"
+                let tempURL = tempDir.appendingPathComponent(tempFileName)
+
+                // Write image data to temporary file
+                try imageContent.data.write(to: tempURL)
+
+                return tempURL.path
+            } catch {
+                print("Failed to create temporary image file: \(error)")
+                return nil
+            }
+        }.value
     }
 
     private var dragPreview: some View {
@@ -411,6 +512,34 @@ struct ClipboardCardView: View {
         return text.count > maxLength ?
             String(text.prefix(maxLength)) + "..." :
             text
+    }
+}
+
+// Custom button style for quick action buttons
+struct QuickActionButtonStyle: ButtonStyle {
+    let color: Color
+    let colorScheme: ColorScheme
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(colorScheme == .light ? 
+                (configuration.isPressed ? Color.primary.opacity(0.7) : Color.primary.opacity(0.8)) :
+                (configuration.isPressed ? Color.primary.opacity(0.6) : Color.primary.opacity(0.7))
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(configuration.isPressed ? 
+                        (colorScheme == .light ? Color.primary.opacity(0.15) : Color.primary.opacity(0.25)) :
+                        (colorScheme == .light ? Color.primary.opacity(0.06) : Color.primary.opacity(0.12))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(configuration.isPressed ? Color.primary.opacity(0.4) : Color.primary.opacity(0.2), lineWidth: configuration.isPressed ? 1 : 0.5)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 

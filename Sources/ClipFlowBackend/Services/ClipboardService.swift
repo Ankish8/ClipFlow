@@ -14,6 +14,7 @@ public class ClipboardService: ClipboardServiceAPI {
     private let monitorService: ClipboardMonitorService
     private let storageService: StorageService
     private let performanceMonitor: PerformanceMonitor
+    private let tagService: TagService
 
     // Publishers
     private let _itemUpdates = PassthroughSubject<ClipboardItem, Never>()
@@ -27,6 +28,7 @@ public class ClipboardService: ClipboardServiceAPI {
     private init() {
         self.storageService = StorageService()
         self.performanceMonitor = PerformanceMonitor.shared
+        self.tagService = TagService(storageService: storageService)
         self.monitorService = ClipboardMonitorService(
             storageService: storageService,
             performanceMonitor: performanceMonitor
@@ -303,6 +305,77 @@ public class ClipboardService: ClipboardServiceAPI {
             item.tags.formUnion(tags)
             try await storageService.updateItem(item)
             _itemUpdates.send(item)
+        }
+    }
+
+    public func removeTags(_ tags: Set<String>, from itemId: UUID) async throws {
+        try await performanceMonitor.measure(operation: "remove_tags") {
+            guard var item = try await storageService.getItem(id: itemId) else {
+                throw ClipboardError.invalidInput("Item not found")
+            }
+
+            item.tags.subtract(tags)
+            try await storageService.updateItem(item)
+            _itemUpdates.send(item)
+        }
+    }
+
+    public func setTags(_ tags: Set<String>, for itemId: UUID) async throws {
+        try await performanceMonitor.measure(operation: "set_tags") {
+            guard var item = try await storageService.getItem(id: itemId) else {
+                throw ClipboardError.invalidInput("Item not found")
+            }
+
+            item.tags = tags
+            try await storageService.updateItem(item)
+            _itemUpdates.send(item)
+        }
+    }
+
+    public func getTags(for itemId: UUID) async throws -> Set<String> {
+        try await performanceMonitor.measure(operation: "get_tags") {
+            guard let item = try await storageService.getItem(id: itemId) else {
+                throw ClipboardError.invalidInput("Item not found")
+            }
+            return item.tags
+        }
+    }
+
+    public func getAllTags() async throws -> [Tag] {
+        try await performanceMonitor.measure(operation: "get_all_tags") {
+            // For now, return default tags until TagService is fully integrated
+            return Tag.defaultTags
+        }
+    }
+
+    public func createTag(name: String, color: String, icon: String?, description: String?) async throws -> Tag {
+        try await performanceMonitor.measure(operation: "create_tag") {
+            // This will be implemented when TagService is fully integrated
+            throw ClipboardError.invalidInput("Tag creation not yet implemented")
+        }
+    }
+
+    public func updateTag(id: UUID, name: String?, color: String?, icon: String?, description: String?) async throws -> Tag {
+        try await performanceMonitor.measure(operation: "update_tag") {
+            // This will be implemented when TagService is fully integrated
+            throw ClipboardError.invalidInput("Tag update not yet implemented")
+        }
+    }
+
+    public func deleteTag(id: UUID) async throws {
+        try await performanceMonitor.measure(operation: "delete_tag") {
+            // This will be implemented when TagService is fully integrated
+            throw ClipboardError.invalidInput("Tag deletion not yet implemented")
+        }
+    }
+
+    public func searchTags(query: String) async throws -> [Tag] {
+        try await performanceMonitor.measure(operation: "search_tags") {
+            // For now, search default tags
+            return Tag.defaultTags.filter { tag in
+                tag.name.lowercased().contains(query.lowercased()) ||
+                tag.description?.lowercased().contains(query.lowercased()) == true
+            }
         }
     }
 

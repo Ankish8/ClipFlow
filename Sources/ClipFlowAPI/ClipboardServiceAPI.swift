@@ -65,6 +65,32 @@ public protocol ClipboardServiceAPI {
     /// Add tags to item
     func addTags(_ tags: Set<String>,
                  to itemId: UUID) async throws
+    
+    /// Remove tags from item
+    func removeTags(_ tags: Set<String>,
+                    from itemId: UUID) async throws
+    
+    /// Set tags for item (replaces all existing tags)
+    func setTags(_ tags: Set<String>,
+                 for itemId: UUID) async throws
+    
+    /// Get all tags for a specific item
+    func getTags(for itemId: UUID) async throws -> Set<String>
+    
+    /// Get all available tags
+    func getAllTags() async throws -> [Tag]
+    
+    /// Create a new tag
+    func createTag(name: String, color: String, icon: String?, description: String?) async throws -> Tag
+    
+    /// Update tag metadata
+    func updateTag(id: UUID, name: String?, color: String?, icon: String?, description: String?) async throws -> Tag
+    
+    /// Delete a tag
+    func deleteTag(id: UUID) async throws
+    
+    /// Search tags by name
+    func searchTags(query: String) async throws -> [Tag]
 
     /// Mark as favorite
     func toggleFavorite(itemId: UUID) async throws

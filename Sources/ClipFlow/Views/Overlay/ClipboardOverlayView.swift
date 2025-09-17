@@ -2,10 +2,25 @@ import SwiftUI
 import ClipFlowCore
 
 struct ClipboardOverlayView: View {
-    @StateObject private var viewModel = ClipboardViewModel()
+    @ObservedObject var viewModel: ClipboardViewModel
     @State private var selectedIndex: Int = 0
     @State private var selectedFilter: ContentFilter = .all
     @State private var isDragging: Bool = false
+
+    // Track if this is using a shared viewModel
+    private let isSharedViewModel: Bool
+
+    // Default initializer creates its own viewModel (for standalone use)
+    init() {
+        self.viewModel = ClipboardViewModel()
+        self.isSharedViewModel = false
+    }
+
+    // Initializer that accepts a shared viewModel (for shared use)
+    init(viewModel: ClipboardViewModel) {
+        self.viewModel = viewModel
+        self.isSharedViewModel = true
+    }
 
     enum ContentFilter: String, CaseIterable {
         case all = "All"
@@ -114,9 +129,10 @@ struct ClipboardOverlayView: View {
                                     ClipboardCardView(
                                         item: item,
                                         index: index + 1,
-                                        isSelected: index == selectedIndex
+                                        isSelected: index == selectedIndex,
+                                        viewModel: viewModel
                                     )
-                                    .id(index)
+                                    .id(item.id)
                                     .onTapGesture {
                                         selectItem(index: index)
                                     }
@@ -159,7 +175,10 @@ struct ClipboardOverlayView: View {
                 .contentShape(Rectangle())
         )
         .onAppear {
-            viewModel.initialize()
+            // Only initialize if this is a standalone viewModel (not shared)
+            if !isSharedViewModel {
+                viewModel.initialize()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .startDragging)) { _ in
             isDragging = true
@@ -328,6 +347,7 @@ struct ClipboardOverlayView: View {
         // This will be called from the window's keyDown events
         // The actual implementation is in the window class
     }
+
 
     private func openSettings() {
         // Close overlay first

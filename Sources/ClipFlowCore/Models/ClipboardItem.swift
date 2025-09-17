@@ -49,6 +49,45 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
     public static func == (lhs: ClipboardItem, rhs: ClipboardItem) -> Bool {
         lhs.id == rhs.id
     }
+    
+    // MARK: - Tag Management
+    
+    public mutating func addTag(_ tag: String) {
+        tags.insert(tag)
+        timestamps.markModified()
+    }
+    
+    public mutating func addTags(_ newTags: Set<String>) {
+        tags.formUnion(newTags)
+        timestamps.markModified()
+    }
+    
+    public mutating func removeTag(_ tag: String) {
+        tags.remove(tag)
+        timestamps.markModified()
+    }
+    
+    public mutating func removeTags(_ tagsToRemove: Set<String>) {
+        tags.subtract(tagsToRemove)
+        timestamps.markModified()
+    }
+    
+    public mutating func setTags(_ newTags: Set<String>) {
+        tags = newTags
+        timestamps.markModified()
+    }
+    
+    public func hasTag(_ tag: String) -> Bool {
+        tags.contains(tag)
+    }
+    
+    public func hasAnyTag(_ tagsToCheck: Set<String>) -> Bool {
+        !tags.isDisjoint(with: tagsToCheck)
+    }
+    
+    public func hasAllTags(_ tagsToCheck: Set<String>) -> Bool {
+        tagsToCheck.isSubset(of: tags)
+    }
 }
 
 // MARK: - ClipboardContent Types

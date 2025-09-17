@@ -15,6 +15,10 @@ class ClipboardViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let clipboardService = ClipboardService.shared
 
+    // Drag protection
+    private var isDragInProgress = false
+    private var itemsBackup: [ClipboardItem] = []
+
     func initialize() {
         print("🚀 ViewModel initializing...")
         setupSubscriptions()
@@ -22,6 +26,9 @@ class ClipboardViewModel: ObservableObject {
 
         // Add simple clipboard monitoring as backup
         startSimpleClipboardMonitoring()
+
+        // Subscribe to drag notifications for data protection
+        setupDragProtection()
     }
 
     private func setupSubscriptions() {
@@ -83,7 +90,13 @@ class ClipboardViewModel: ObservableObject {
                     limit: 100,
                     filter: nil
                 )
-                items = history
+
+                // Only update items if not currently dragging
+                if !isDragInProgress {
+                    items = history
+                } else {
+                    print("🛡️ Skipping data update during drag operation")
+                }
 
                 // Load statistics
                 statistics = await clipboardService.getStatistics()
@@ -147,6 +160,15 @@ class ClipboardViewModel: ObservableObject {
             }
         }
     }
+    
+    func assignTags(to item: ClipboardItem) {
+        // This will open the tag assignment UI
+        // For now, we'll just log it - the actual UI integration will come later
+        print("🏷️ Opening tag assignment for item: \(item.id)")
+        
+        // TODO: Present TagAssignmentView as a sheet or popover
+        // This requires integration with the main view controller
+    }
 
     // MARK: - Search and Filtering
 
@@ -195,10 +217,20 @@ class ClipboardViewModel: ObservableObject {
     // MARK: - Data Management
 
     func refreshData() {
-        loadInitialData()
+        if !isDragInProgress {
+            loadInitialData()
+        } else {
+            print("🛡️ Skipping refresh during drag operation")
+        }
     }
 
     func clearHistory() {
+        // Don't clear during drag
+        guard !isDragInProgress else {
+            print("🛡️ Preventing clear history during drag operation")
+            return
+        }
+
         Task {
             do {
                 try await clipboardService.clearHistory(olderThan: nil)
@@ -405,5 +437,53 @@ class ClipboardViewModel: ObservableObject {
     func cleanup() {
         simpleTimer?.invalidate()
         simpleTimer = nil
+    }
+
+    // MARK: - Drag Protection
+
+    private func setupDragProtection() {
+        // Subscribe to start dragging notification
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("startDragging"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleDragStart()
+            }
+        }
+
+        // Subscribe to stop dragging notification
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("stopDragging"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleDragEnd()
+            }
+        }
+    }
+
+    private func handleDragStart() {
+        print("🛡️ Drag started - backing up \(items.count) items")
+        isDragInProgress = true
+        itemsBackup = items // Backup current items
+    }
+
+    private func handleDragEnd() {
+        print("🛡️ Drag ended - checking data integrity")
+        isDragInProgress = false
+
+        // If items were cleared during drag, restore from backup
+        if items.isEmpty && !itemsBackup.isEmpty {
+            print("🔧 Data was lost during drag - restoring \(itemsBackup.count) items")
+            items = itemsBackup
+        }
+
+        // Clear backup after a short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.itemsBackup.removeAll()
+        }
     }
 }

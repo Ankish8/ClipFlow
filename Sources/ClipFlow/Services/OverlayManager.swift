@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import KeyboardShortcuts
+import ClipFlowBackend
 
 @MainActor
 class OverlayManager: ObservableObject {
@@ -9,9 +10,14 @@ class OverlayManager: ObservableObject {
     private var overlayWindow: ClipboardOverlayWindow?
     @Published var isVisible = false
 
+    // Shared ViewModel to persist data between overlay shows/hides
+    private let sharedViewModel = ClipboardViewModel()
+
     private init() {
         setupNotifications()
         setupKeyboardShortcuts()
+        // Initialize the shared ViewModel once
+        sharedViewModel.initialize()
     }
 
     private func setupNotifications() {
@@ -74,8 +80,8 @@ class OverlayManager: ObservableObject {
     private func createOverlayWindow() {
         overlayWindow = ClipboardOverlayWindow()
 
-        // Set up the SwiftUI content
-        let contentView = ClipboardOverlayView()
+        // Set up the SwiftUI content with shared ViewModel
+        let contentView = ClipboardOverlayView(viewModel: sharedViewModel)
         let hostingView = NSHostingView(rootView: contentView)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
