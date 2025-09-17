@@ -11,6 +11,7 @@ class ClipboardViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var statistics: ClipboardStatistics?
+    @Published var tags: [Tag] = []
 
     private var cancellables = Set<AnyCancellable>()
     private let clipboardService = ClipboardService.shared
@@ -23,6 +24,7 @@ class ClipboardViewModel: ObservableObject {
         print("🚀 ViewModel initializing...")
         setupSubscriptions()
         loadInitialData()
+        loadTags()
 
         // Add simple clipboard monitoring as backup
         startSimpleClipboardMonitoring()
@@ -161,13 +163,36 @@ class ClipboardViewModel: ObservableObject {
         }
     }
     
-    func assignTags(to item: ClipboardItem) {
-        // This will open the tag assignment UI
-        // For now, we'll just log it - the actual UI integration will come later
-        print("🏷️ Opening tag assignment for item: \(item.id)")
-        
-        // TODO: Present TagAssignmentView as a sheet or popover
-        // This requires integration with the main view controller
+
+    func updateItemTags(_ item: ClipboardItem, with newTags: Set<String>) {
+        Task {
+            do {
+                try await clipboardService.setTags(newTags, for: item.id)
+
+                // Update local items array
+                if let index = items.firstIndex(where: { $0.id == item.id }) {
+                    var updatedItem = items[index]
+                    updatedItem.tags = newTags
+                    items[index] = updatedItem
+                }
+            } catch {
+                errorMessage = "Failed to update tags: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func loadTags() {
+        Task {
+            do {
+                tags = try await clipboardService.getAllTags()
+            } catch {
+                print("Failed to load tags: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func getTagColor(for tagName: String) -> String? {
+        return tags.first { $0.name == tagName }?.color
     }
 
     // MARK: - Search and Filtering

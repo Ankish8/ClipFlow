@@ -7,10 +7,10 @@ import ClipFlowCore
 
 struct MenuBarContentView: View {
     @ObservedObject var manager: MenuBarManager
-    @State private var selectedIndex = 0
     @State private var searchResults: [ClipboardItem] = []
     @State private var isSearching = false
     @FocusState private var isSearchFocused: Bool
+    @State private var searchTask: Task<Void, Never>?
 
     private let cardHeight: CGFloat = 60
     private let maxVisibleItems = 8
@@ -89,7 +89,16 @@ struct MenuBarContentView: View {
                 .textFieldStyle(.plain)
                 .focused($isSearchFocused)
                 .onChange(of: manager.searchText) { newValue in
-                    performSearch(query: newValue)
+                    // Cancel previous search task
+                    searchTask?.cancel()
+                    
+                    // Debounce search by 300ms
+                    searchTask = Task {
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                        if !Task.isCancelled {
+                            performSearch(query: newValue)
+                        }
+                    }
                 }
 
             if !manager.searchText.isEmpty {
@@ -122,24 +131,15 @@ struct MenuBarContentView: View {
                         ClipboardItemCard(
                             item: item,
                             index: index + 1,
-                            isSelected: index == selectedIndex,
-                            onSelect: { selectItem(at: index) },
                             onPaste: { pasteItem(item) },
-                            onDelete: { deleteItem(item) }
-                        )
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(index == selectedIndex ? Color.accentColor.opacity(0.1) : Color.clear)
+                            onDelete: { deleteItem(item) },
+                            manager: manager
                         )
                         .id(index)
                     }
                 }
                 .padding(.horizontal, 8)
-                .onChange(of: selectedIndex) { newIndex in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(newIndex, anchor: .center)
-                    }
-                }
+                
             }
         }
         .frame(maxHeight: CGFloat(maxVisibleItems) * cardHeight)
@@ -178,33 +178,22 @@ struct MenuBarContentView: View {
 
     // MARK: - Actions
 
-    private func selectItem(at index: Int) {
-        selectedIndex = index
-    }
-
     private func pasteItem(_ item: ClipboardItem) {
         manager.pasteSelectedItem(item)
     }
 
     private func deleteItem(_ item: ClipboardItem) {
         manager.deleteItem(item)
-
-        // Adjust selection if needed
-        if selectedIndex >= displayItems.count && selectedIndex > 0 {
-            selectedIndex = displayItems.count - 1
-        }
     }
 
     private func performSearch(query: String) {
         if query.isEmpty {
             isSearching = false
             searchResults = []
-            selectedIndex = 0
             return
         }
 
         isSearching = true
-        selectedIndex = 0
 
         Task {
             let results = await manager.searchItems(query: query)
@@ -218,39 +207,18 @@ struct MenuBarContentView: View {
         manager.searchText = ""
         isSearching = false
         searchResults = []
-        selectedIndex = 0
         isSearchFocused = true
     }
 
     private func showPreferences() {
-        // Would open preferences window
-        print("Show preferences")
+        manager.hidePopover()
+        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
     }
 
     // MARK: - Keyboard Navigation
 
     private func handleKeyDown(_ keyCode: UInt16) -> Bool {
         switch keyCode {
-        case 125: // Down arrow
-            moveSelection(by: 1)
-            return true
-
-        case 126: // Up arrow
-            moveSelection(by: -1)
-            return true
-
-        case 36: // Return/Enter
-            if !displayItems.isEmpty {
-                pasteItem(displayItems[selectedIndex])
-                return true
-            }
-
-        case 51, 117: // Delete/Backspace
-            if !displayItems.isEmpty && !isSearchFocused {
-                deleteItem(displayItems[selectedIndex])
-                return true
-            }
-
         case 53: // Escape
             if isSearching && !manager.searchText.isEmpty {
                 clearSearch()
@@ -259,26 +227,11 @@ struct MenuBarContentView: View {
             }
             return true
 
-        case 18...26: // Number keys 1-9
-            let number = Int(keyCode) - 17
-            if number >= 1 && number <= displayItems.count {
-                selectedIndex = number - 1
-                pasteItem(displayItems[selectedIndex])
-                return true
-            }
-
         default:
             break
         }
 
         return false
-    }
-
-    private func moveSelection(by offset: Int) {
-        let newIndex = selectedIndex + offset
-        if newIndex >= 0 && newIndex < displayItems.count {
-            selectedIndex = newIndex
-        }
     }
 }
 
@@ -287,10 +240,10 @@ struct MenuBarContentView: View {
 private struct ClipboardItemCard: View {
     let item: ClipboardItem
     let index: Int
-    let isSelected: Bool
-    let onSelect: () -> Void
     let onPaste: () -> Void
     let onDelete: () -> Void
+    let manager: MenuBarManager
+    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -298,13 +251,13 @@ private struct ClipboardItemCard: View {
             Text("\(index)")
                 .font(.caption)
                 .fontWeight(.medium)
-                .foregroundColor(isSelected ? .accentColor : .secondary)
+                .foregroundColor(.secondary)
                 .frame(width: 20)
 
             // Content icon
             contentIcon
                 .frame(width: 24, height: 24)
-                .foregroundColor(isSelected ? .accentColor : .primary)
+                .foregroundColor(.primary)
 
             // Content preview
             VStack(alignment: .leading, spacing: 2) {
@@ -328,8 +281,8 @@ private struct ClipboardItemCard: View {
 
             Spacer()
 
-            // Actions (visible on hover/selection)
-            if isSelected {
+            // Actions (visible on hover)
+            if isHovered {
                 HStack(spacing: 4) {
                     Button(action: onPaste) {
                         Image(systemName: "doc.on.clipboard")
@@ -350,11 +303,19 @@ private struct ClipboardItemCard: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onTapGesture {
-            onSelect()
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovered ? Color.secondary.opacity(0.05) : Color.clear)
+        )
+        .onHover { hovering in
+            isHovered = hovering
         }
         .onTapGesture(count: 2) {
             onPaste()
+            // Close popover after pasting
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                manager.hidePopover()
+            }
         }
     }
 

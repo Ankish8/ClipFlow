@@ -343,39 +343,31 @@ public class ClipboardService: ClipboardServiceAPI {
 
     public func getAllTags() async throws -> [Tag] {
         try await performanceMonitor.measure(operation: "get_all_tags") {
-            // For now, return default tags until TagService is fully integrated
-            return Tag.defaultTags
+            return try await tagService.getAllTags()
         }
     }
 
     public func createTag(name: String, color: String, icon: String?, description: String?) async throws -> Tag {
         try await performanceMonitor.measure(operation: "create_tag") {
-            // This will be implemented when TagService is fully integrated
-            throw ClipboardError.invalidInput("Tag creation not yet implemented")
+            return try await tagService.createTag(name: name, color: color, icon: icon, description: description)
         }
     }
 
     public func updateTag(id: UUID, name: String?, color: String?, icon: String?, description: String?) async throws -> Tag {
         try await performanceMonitor.measure(operation: "update_tag") {
-            // This will be implemented when TagService is fully integrated
-            throw ClipboardError.invalidInput("Tag update not yet implemented")
+            return try await tagService.updateTag(id: id, name: name, color: color, icon: icon, description: description)
         }
     }
 
     public func deleteTag(id: UUID) async throws {
         try await performanceMonitor.measure(operation: "delete_tag") {
-            // This will be implemented when TagService is fully integrated
-            throw ClipboardError.invalidInput("Tag deletion not yet implemented")
+            try await tagService.deleteTag(id: id)
         }
     }
 
     public func searchTags(query: String) async throws -> [Tag] {
         try await performanceMonitor.measure(operation: "search_tags") {
-            // For now, search default tags
-            return Tag.defaultTags.filter { tag in
-                tag.name.lowercased().contains(query.lowercased()) ||
-                tag.description?.lowercased().contains(query.lowercased()) == true
-            }
+            return try await tagService.searchTags(query: query)
         }
     }
 

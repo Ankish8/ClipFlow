@@ -126,7 +126,7 @@ ClipFlow is a macOS clipboard manager that provides seamless clipboard history t
 - ✅ Delete items (with animation)
 - ✅ Copy items to clipboard
 - ❌ Paste with transformations
-- ❌ Tag management
+- ✅ Tag management (inline)
 - ❌ Collections organization
 
 #### Search & Filtering
@@ -333,9 +333,9 @@ ClipFlow is a macOS clipboard manager that provides seamless clipboard history t
 
 ### 5.2 Functionality Metrics
 - **Content Type Coverage**: 8/8 major types supported ✅
-- **Feature Completeness**: 80% (core monitoring + modern UI + user actions + tag visualization working)
+- **Feature Completeness**: 85% (core monitoring + modern UI + user actions + inline tag management working)
 - **Data Persistence**: 20% (cache-based, database bypassed)
-- **User Actions**: 80% (full button functionality, animations, haptic feedback, tag visualization)
+- **User Actions**: 90% (full button functionality, animations, haptic feedback, inline tag management)
 
 ### 5.3 Quality Metrics
 - **Crash Rate**: 0% (no crashes observed)
