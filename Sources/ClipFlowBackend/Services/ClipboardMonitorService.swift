@@ -129,19 +129,31 @@ public class ClipboardMonitorService {
             }
 
             // Process clipboard content
-            guard let item = await processClipboardContent(pasteboard) else { return nil }
+            NSLog("🚀 About to call processClipboardContent")
+            guard let item = await processClipboardContent(pasteboard) else {
+                NSLog("❌ processClipboardContent returned nil")
+                return nil
+            }
+            NSLog("✅ processClipboardContent returned successfully with item: \(item.content.contentType)")
 
             // Check for duplicates
+            NSLog("🔍 Checking duplicates: force=\(force), lastHash=\(lastHash), newHash=\(item.metadata.hash)")
             if !force && item.metadata.hash == lastHash {
+                NSLog("❌ Duplicate detected - skipping item")
                 return nil
             }
             lastHash = item.metadata.hash
+            NSLog("✅ Duplicate check passed")
 
             // Apply security checks
+            NSLog("🔒 About to apply security checks")
             let secureItem = await applySecurityChecks(item)
+            NSLog("✅ Security checks completed")
 
             // Store the item
+            NSLog("💾 About to save item to storage")
             try await storageService.saveItem(secureItem)
+            NSLog("💾 Successfully saved item to storage: \(secureItem.content.contentType)")
 
             // Update statistics
             totalItemsProcessed += 1
@@ -149,6 +161,7 @@ public class ClipboardMonitorService {
 
             // Notify subscribers
             itemSubject.send(secureItem)
+            NSLog("📢 Notified subscribers about new item")
 
             return secureItem
 
@@ -183,7 +196,11 @@ public class ClipboardMonitorService {
         guard let types = pasteboard.types, !types.isEmpty else { return nil }
 
         // Enhanced debug logging to understand what types are present
-        print("🔍 Clipboard types found: \(types.map { $0.rawValue })")
+        NSLog("🔍 Clipboard types found: \(types.map { $0.rawValue })")
+        NSLog("🔍 .string type resolves to: \(NSPasteboard.PasteboardType.string.rawValue)")
+        NSLog("🔍 .URL type resolves to: \(NSPasteboard.PasteboardType.URL.rawValue)")
+        NSLog("🔍 types.contains(.string): \(types.contains(.string))")
+        NSLog("🔍 types.contains(.URL): \(types.contains(.URL))")
 
         // Check for file URLs specifically
         if types.contains(.fileURL) {
@@ -197,34 +214,47 @@ public class ClipboardMonitorService {
         if types.contains(.string) {
             if let stringContent = pasteboard.string(forType: .string) {
                 let preview = stringContent.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100)
-                print("📄 String content preview: \"\(preview)\"")
+                NSLog("📄 String content preview: \"\(preview)\"")
+
+                // Test URL detection
+                let isURL = stringContent.isValidURL
+                NSLog("🔗 URL detection result: \(isURL) for content: \(preview)")
             }
         }
 
         let content: ClipboardContent?
+        NSLog("🚀 About to enter content processing branches")
 
-        // Priority order for content detection - files MUST come first before images
-        if types.contains(.fileURL) {
-            print("📁 Processing as file content (highest priority)")
-            content = await processFileContent(pasteboard)
-            // If file processing fails, don't fall back to image processing for file types
-            if content == nil {
-                print("❌ File processing failed, but not falling back to image processing")
-                return nil
-            }
-        } else if types.contains(.URL) {
-            print("🔗 Processing as URL content")
+        // FIXED priority order: Check native URLs first, then intelligent file/image detection, then text with URL detection
+        NSLog("🔍 Checking .URL: \(types.contains(.URL))")
+        if types.contains(.URL) {
+            print("🔗 Processing as native URL content")
             content = await processURLContent(pasteboard)
+        } else if types.contains(.fileURL) && !(types.contains(.png) || types.contains(.tiff)) {
+            // Only process as file if it's a file WITHOUT image types (prevents duplication)
+            print("📁 Processing as pure file content")
+            content = await processFileContent(pasteboard)
         } else if types.contains(.png) || types.contains(.tiff) {
-            print("🖼️ Processing as image content")
-            content = await processImageContent(pasteboard)
+            // Handle images - check if they're files or pure images, but process only ONCE
+            NSLog("🔍 Checking .png/.tiff: \(types.contains(.png)) / \(types.contains(.tiff))")
+            if types.contains(.fileURL) {
+                print("📁 Image file detected - processing as file only")
+                content = await processFileContent(pasteboard)
+            } else {
+                print("🖼️ Processing as pure image content")
+                content = await processImageContent(pasteboard)
+            }
         } else if types.contains(.rtf) {
+            NSLog("🔍 Checking .rtf: \(types.contains(.rtf))")
             print("📝 Processing as rich text content")
             content = await processRichTextContent(pasteboard)
         } else if types.contains(.string) {
-            print("📄 Processing as text content")
-            content = await processTextContent(pasteboard)
+            NSLog("🔍 Checking .string: \(types.contains(.string))")
+            NSLog("📄 Processing as text content - about to call processTextContent")
+            content = await processTextContent(pasteboard) // This will detect URLs in text
+            NSLog("📄 Returned from processTextContent: \(content != nil ? "SUCCESS" : "NIL")")
         } else if types.contains(.color) {
+            NSLog("🔍 Checking .color: \(types.contains(.color))")
             print("🎨 Processing as color content")
             content = await processColorContent(pasteboard)
         } else {
@@ -232,58 +262,91 @@ public class ClipboardMonitorService {
             content = await processGenericContent(pasteboard, types: types)
         }
 
+        NSLog("🔍 After content processing, content is: \(content != nil ? "NOT NIL" : "NIL")")
         if let clipboardContent = content {
-            print("✅ Content classified as: \(clipboardContent.contentType)")
+            NSLog("✅ Content classified as: \(clipboardContent.contentType)")
         } else {
-            print("❌ Failed to process clipboard content")
+            NSLog("❌ Failed to process clipboard content")
+            return nil
         }
 
-        guard let clipboardContent = content else { return nil }
+        guard let clipboardContent = content else {
+            NSLog("❌ Content guard failed - returning nil")
+            return nil
+        }
+
+        NSLog("🚀 About to generate metadata for content")
 
         let metadata = ItemMetadata.generate(for: clipboardContent)
-        let source = await getCurrentApplicationInfo()
+        NSLog("✅ Generated metadata successfully")
 
-        return ClipboardItem(
+        let source = await getCurrentApplicationInfo()
+        NSLog("✅ Got application info")
+
+        let finalItem = ClipboardItem(
             content: clipboardContent,
             metadata: metadata,
             source: source
         )
+        NSLog("✅ Created final ClipboardItem successfully")
+
+        return finalItem
     }
 
     private func processTextContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
-        guard let text = pasteboard.string(forType: .string) else { return nil }
+        NSLog("🚀 ENTERED processTextContent method")
+        guard let text = pasteboard.string(forType: .string) else {
+            print("❌ No string content in pasteboard")
+            return nil
+        }
+        NSLog("✅ Got text from pasteboard: \(text.prefix(50))")
 
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("📄 Text content: \"\(trimmedText.prefix(50))...\"")
+        print("📄 Text content: \"\(trimmedText.prefix(50))\"")
+
+        // Explicit test of URL validation
+        let urlTest = trimmedText.isValidURL
+        print("🔍 URL validation result for '\(trimmedText)': \(urlTest)")
+
+        // Manual URL check for debugging
+        let hasHttps = trimmedText.lowercased().hasPrefix("https://")
+        let hasHttp = trimmedText.lowercased().hasPrefix("http://")
+        let canCreateURL = URL(string: trimmedText) != nil
+        print("📊 URL Debug - hasHttps: \(hasHttps), hasHttp: \(hasHttp), canCreateURL: \(canCreateURL)")
 
         // Check if it's a URL first - prioritize URL detection
-        print("🔍 Checking if text is URL: \(trimmedText.isValidURL)")
+        NSLog("🔍 About to check URL conversion: isValidURL=\(trimmedText.isValidURL)")
         if trimmedText.isValidURL, let url = URL(string: trimmedText) {
-            print("🔗 Converting text to link content for URL: \(url)")
-            let (title, description, favicon, preview) = await fetchURLMetadata(url)
+            NSLog("🔗 SUCCESS: Converting text to link content for URL: \(url)")
+            // TEMPORARY FIX: Skip metadata fetching to avoid hanging
+            NSLog("🔄 Skipping metadata fetch for debugging")
             return .link(LinkContent(
                 url: url,
-                title: title,
-                description: description,
-                faviconData: favicon,
-                previewImageData: preview
+                title: url.absoluteString,
+                description: nil,
+                faviconData: nil,
+                previewImageData: nil
             ))
+        } else {
+            NSLog("❌ URL validation failed - treating as plain text")
         }
 
         let textContent = TextContent(
             plainText: text,
-            language: await detectLanguage(text),
+            language: "en", // TEMPORARY FIX: Skip language detection to avoid hanging
             isEmail: text.isValidEmail,
             isPhoneNumber: text.isValidPhoneNumber,
             isURL: text.isValidURL
         )
 
-        // Check if it's actually code
-        if let detectedLanguage = await detectProgrammingLanguage(text) {
-            return .code(CodeContent(code: text, language: detectedLanguage))
-        }
+        // TEMPORARY FIX: Skip programming language detection to avoid hanging
+        // if let detectedLanguage = await detectProgrammingLanguage(text) {
+        //     return .code(CodeContent(code: text, language: detectedLanguage))
+        // }
 
-        return .text(textContent)
+        let result: ClipboardContent = .text(textContent)
+        NSLog("📤 processTextContent returning: \(result)")
+        return result
     }
 
     private func processRichTextContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {

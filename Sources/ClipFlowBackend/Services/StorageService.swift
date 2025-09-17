@@ -30,35 +30,43 @@ public class StorageService {
     // MARK: - Item Operations
 
     public func saveItem(_ item: ClipboardItem) async throws {
-        try await performanceMonitor.measure(operation: "save_item") {
-            // Check for duplicates first
-            if await itemExists(hash: item.metadata.hash) {
-                return
-            }
+        // TEMPORARY: Skip performance monitoring for debugging
+        NSLog("🗂️ StorageService.saveItem started")
 
-            // Store large content to disk if needed
-            var modifiedItem = item
-            if let largeContentPath = await storeLargeContent(item) {
-                modifiedItem = updateItemWithContentPath(item, path: largeContentPath)
-            }
-
-            // Save to database
-            try await databaseManager.saveItem(modifiedItem)
-
-            // Cache the item
-            await cacheManager.cacheItem(modifiedItem, hash: modifiedItem.metadata.hash)
-
-            // Update statistics
-            totalItemsStored += 1
-            totalSizeBytes += item.metadata.size
-
-            // Log performance
-            await databaseManager.logPerformanceMetric(
-                operation: "save_item",
-                duration: 0, // Would be measured by performanceMonitor
-                memoryUsage: item.metadata.size
-            )
+        // Check for duplicates first
+        NSLog("🔍 Checking for duplicates")
+        if await itemExists(hash: item.metadata.hash) {
+            NSLog("⚠️ Item already exists, skipping")
+            return
         }
+        NSLog("✅ No duplicates found")
+
+        // Store large content to disk if needed
+        NSLog("💾 Checking if large content storage needed")
+        var modifiedItem = item
+        if let largeContentPath = await storeLargeContent(item) {
+            modifiedItem = updateItemWithContentPath(item, path: largeContentPath)
+            NSLog("💾 Large content stored at: \(largeContentPath)")
+        } else {
+            NSLog("💾 No large content storage needed")
+        }
+
+        // Save to database
+        NSLog("💾 About to save to database")
+        try await databaseManager.saveItem(modifiedItem)
+        NSLog("✅ Saved to database successfully")
+
+        // Cache the item
+        NSLog("🗂️ About to cache item")
+        await cacheManager.cacheItem(modifiedItem, hash: modifiedItem.metadata.hash)
+        NSLog("✅ Item cached successfully")
+
+        // Update statistics
+        totalItemsStored += 1
+        totalSizeBytes += item.metadata.size
+        NSLog("📊 Statistics updated: totalItems=\(totalItemsStored)")
+
+        NSLog("✅ StorageService.saveItem completed successfully")
     }
 
     public func getItem(id: UUID) async throws -> ClipboardItem? {
@@ -103,6 +111,14 @@ public class StorageService {
     ) async throws -> [ClipboardItem] {
         return try await performanceMonitor.measure(operation: "get_items") {
             let items = try await databaseManager.getItems(limit: limit, offset: offset, filter: filter)
+
+            // FALLBACK: If database is bypassed and returns empty, use cache
+            if items.isEmpty && offset == 0 {
+                NSLog("🔄 Database returned empty, falling back to cache for menu bar sync")
+                let cachedItems = await cacheManager.getRecentItems(limit: limit)
+                NSLog("📋 Cache fallback returned \(cachedItems.count) items")
+                return cachedItems
+            }
 
             // Load large content for items that need it
             var loadedItems: [ClipboardItem] = []

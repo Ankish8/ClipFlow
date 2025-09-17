@@ -6,23 +6,44 @@ public extension String {
     var isValidURL: Bool {
         let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Check if it starts with common URL schemes
-        let urlPrefixes = ["http://", "https://", "ftp://", "ftps://", "mailto:", "file://"]
-        for prefix in urlPrefixes {
-            if trimmed.lowercased().hasPrefix(prefix) {
-                return URL(string: trimmed) != nil
+        // Exclude file URLs as they should be handled as files
+        if trimmed.hasPrefix("file://") || trimmed.hasPrefix("/") {
+            return false
+        }
+
+        // Simple and reliable URL detection - prioritize common patterns
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            // Additional validation: can we create a URL from it?
+            return URL(string: trimmed) != nil
+        }
+
+        // Check www. prefix
+        if trimmed.hasPrefix("www.") {
+            return URL(string: "https://" + trimmed) != nil
+        }
+
+        // For single line content, use NSDataDetector as fallback
+        if !trimmed.contains("\n") {
+            guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+                return false
+            }
+
+            if let match = detector.firstMatch(in: trimmed, options: [], range: NSRange(location: 0, length: trimmed.utf16.count)) {
+                return match.range.length == trimmed.utf16.count
             }
         }
 
-        // Check for URLs without scheme (like google.com)
-        if !trimmed.contains(" ") && trimmed.contains(".") {
-            let withHTTPS = "https://" + trimmed
-            if let url = URL(string: withHTTPS), url.host != nil {
-                return true
-            }
+        // For multi-line content, check if it's primarily URLs
+        let lines = trimmed.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        guard !lines.isEmpty else { return false }
+
+        let urlLikeLines = lines.filter { line in
+            let cleanLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return cleanLine.hasPrefix("http://") || cleanLine.hasPrefix("https://") || cleanLine.hasPrefix("www.")
         }
 
-        return false
+        return Double(urlLikeLines.count) / Double(lines.count) >= 0.5
     }
 
     var isValidEmail: Bool {
@@ -36,5 +57,16 @@ public extension String {
         let phoneTest = NSPredicate(format: "SELF MATCHES %@", phoneRegex)
         let cleanedPhone = self.replacingOccurrences(of: "[^0-9+]", with: "", options: .regularExpression)
         return phoneTest.evaluate(with: cleanedPhone) && cleanedPhone.count >= 7
+    }
+
+    var isValidColor: Bool {
+        // Use Macboard's proven regex approach for hex colors
+        guard let regex = try? NSRegularExpression(pattern: "^#(?:[0-9a-fA-F]{2}){3,4}$") else { return false }
+        let range = NSRange(location: 0, length: self.utf16.count)
+        return regex.firstMatch(in: self, options: [], range: range) != nil
+    }
+
+    var isNum: Bool {
+        return !isEmpty && rangeOfCharacter(from: CharacterSet.decimalDigits.inverted) == nil
     }
 }

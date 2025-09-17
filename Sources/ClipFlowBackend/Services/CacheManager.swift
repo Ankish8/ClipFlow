@@ -148,6 +148,24 @@ public actor CacheManager {
         collectionCache.removeValue(forKey: id)
     }
 
+    // MARK: - Cache Queries
+
+    /// Get recent items from cache sorted by access order (most recent first)
+    /// This is used as fallback when database is bypassed
+    public func getRecentItems(limit: Int) async -> [ClipboardItem] {
+        // Use the LRU access order to get most recent items
+        let recentIds = accessOrder.getAllItems().reversed().prefix(limit)
+
+        var items: [ClipboardItem] = []
+        for id in recentIds {
+            if let cachedItem = memoryCache[id] {
+                items.append(cachedItem.item)
+            }
+        }
+
+        return items
+    }
+
     // MARK: - Advanced Cache Management
 
     private func enforceMemoryLimit() async {
@@ -384,6 +402,16 @@ private class LinkedList<T> {
         if head == nil {
             head = node
         }
+    }
+
+    func getAllItems() -> [T] {
+        var items: [T] = []
+        var current = head
+        while let node = current {
+            items.append(node.value)
+            current = node.next
+        }
+        return items
     }
 }
 

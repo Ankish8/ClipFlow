@@ -8,7 +8,7 @@ struct ClipFlowApp: App {
     var body: some Scene {
         // Hidden window for menu bar app
         Settings {
-            EmptyView()
+            SettingsView()
         }
     }
 }
@@ -27,7 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cacheManager: CacheManager!
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
-        print("🚀 ClipFlow launching with enhanced architecture...")
+        NSLog("🚀 ClipFlow launching with enhanced architecture...")
 
         // Set app as accessory (no dock icon, runs in background)
         NSApp.setActivationPolicy(.accessory)
@@ -39,8 +39,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             await warmupCache()
             startPerformanceMonitoring()
 
-            print("✅ ClipFlow ready with all features!")
-            print("⌨️ Press ⌥⌘V for overlay or click menu bar icon")
+            NSLog("✅ ClipFlow ready with all features!")
+            NSLog("⌨️ Press ⌥⌘V for overlay or click menu bar icon")
         }
     }
 
@@ -83,24 +83,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private func startClipboardMonitoring() async {
-        print("🔄 Starting enhanced clipboard monitoring...")
+        NSLog("🔄 Starting enhanced clipboard monitoring...")
 
         do {
             // Start clipboard monitoring
             try await ClipboardService.shared.startMonitoring()
 
-            print("✅ Clipboard monitoring started successfully")
+            NSLog("✅ Clipboard monitoring started successfully")
 
             // Test current clipboard content
             if let currentItem = await ClipboardService.shared.getCurrentClipboard() {
-                print("📄 Found current clipboard content: \(currentItem.content.displayText.prefix(50))...")
+                NSLog("📄 Found current clipboard content: \(currentItem.content.displayText.prefix(50))...")
             } else {
-                print("📭 No current clipboard content found")
+                NSLog("📭 No current clipboard content found")
             }
 
         } catch {
-            print("❌ Failed to start clipboard monitoring: \(error)")
-            print("ℹ️ Fallback monitoring will be used")
+            NSLog("❌ Failed to start clipboard monitoring: \(error.localizedDescription)")
+            NSLog("ℹ️ Fallback monitoring will be used")
         }
     }
 

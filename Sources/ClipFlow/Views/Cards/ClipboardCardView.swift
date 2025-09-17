@@ -1,5 +1,6 @@
 import SwiftUI
 import ClipFlowCore
+import UniformTypeIdentifiers
 
 struct ClipboardCardView: View {
     let item: ClipboardItem
@@ -54,6 +55,20 @@ struct ClipboardCardView: View {
                 isHovering = hovering
             }
         }
+        .draggable(dragData) {
+            dragPreview
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 5)
+                .onChanged { _ in
+                    NotificationCenter.default.post(name: .startDragging, object: nil)
+                }
+                .onEnded { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        NotificationCenter.default.post(name: .stopDragging, object: nil)
+                    }
+                }
+        )
         .overlay(alignment: .topTrailing) {
             if isHovering || isSelected {
                 quickActionButtons
@@ -300,6 +315,102 @@ struct ClipboardCardView: View {
             name: .pinClipboardItem,
             object: item
         )
+    }
+
+    // MARK: - Drag and Drop Support
+
+    private var dragData: String {
+        switch item.content {
+        case .text(let textContent):
+            return textContent.plainText
+        case .richText(let richContent):
+            return richContent.plainTextFallback
+        case .image(_):
+            // For images, we'll provide a description that could be dropped as text
+            return "[Image: \(item.metadata.preview ?? "Untitled")]"
+        case .file(let fileContent):
+            // For files, return the file paths as text
+            return fileContent.urls.map { $0.path }.joined(separator: "\n")
+        case .link(let linkContent):
+            return linkContent.url.absoluteString
+        case .code(let codeContent):
+            return codeContent.code
+        case .color(let colorContent):
+            return colorContent.hexValue
+        case .snippet(let snippetContent):
+            return snippetContent.content
+        case .multiple(let multiContent):
+            // For multiple items, return the first text-like item
+            for subItem in multiContent.items {
+                switch subItem {
+                case .text(let textContent):
+                    return textContent.plainText
+                case .richText(let richContent):
+                    return richContent.plainTextFallback
+                case .link(let linkContent):
+                    return linkContent.url.absoluteString
+                case .code(let codeContent):
+                    return codeContent.code
+                case .color(let colorContent):
+                    return colorContent.hexValue
+                default:
+                    continue
+                }
+            }
+            return "Multiple items"
+        }
+    }
+
+    private var dragPreview: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Type badge
+            Text(contentTypeInfo.name.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(contentTypeInfo.color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(contentTypeInfo.color.opacity(0.15))
+                )
+
+            // Content preview
+            Text(dragPreviewText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+
+            // Drag indicator
+            HStack {
+                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("Drag to paste")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+        }
+        .padding(12)
+        .frame(width: 200)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.ultraThickMaterial)
+                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        )
+    }
+
+    private var dragPreviewText: String {
+        let text = dragData
+        let maxLength = 60
+        return text.count > maxLength ?
+            String(text.prefix(maxLength)) + "..." :
+            text
     }
 }
 

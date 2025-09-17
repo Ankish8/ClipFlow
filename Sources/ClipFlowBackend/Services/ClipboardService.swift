@@ -180,17 +180,23 @@ public class ClipboardService: ClipboardServiceAPI {
             // Write to clipboard
             try await writeToClipboard(itemToPaste)
 
-            // Simulate paste command
+            // Simulate paste command (using Macboard's proven approach)
             await MainActor.run {
-                let source = CGEventSource(stateID: .hidSystemState)
+                let source = CGEventSource(stateID: .combinedSessionState)
+                // Disable local keyboard events while pasting for reliability
+                source?.setLocalEventsFilterDuringSuppressionState(
+                    [.permitLocalMouseEvents, .permitSystemDefinedEvents],
+                    state: .eventSuppressionStateSuppressionInterval
+                )
+
                 let pasteKeyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) // V key
                 let pasteKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
 
                 pasteKeyDown?.flags = .maskCommand
                 pasteKeyUp?.flags = .maskCommand
 
-                pasteKeyDown?.post(tap: .cghidEventTap)
-                pasteKeyUp?.post(tap: .cghidEventTap)
+                pasteKeyDown?.post(tap: .cgSessionEventTap)
+                pasteKeyUp?.post(tap: .cgSessionEventTap)
             }
         }
     }

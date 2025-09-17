@@ -5,6 +5,7 @@ struct ClipboardOverlayView: View {
     @StateObject private var viewModel = ClipboardViewModel()
     @State private var selectedIndex: Int = 0
     @State private var selectedFilter: ContentFilter = .all
+    @State private var isDragging: Bool = false
 
     enum ContentFilter: String, CaseIterable {
         case all = "All"
@@ -84,6 +85,11 @@ struct ClipboardOverlayView: View {
                         .padding(.horizontal, 10)
 
                     Spacer()
+
+                    // Settings button at bottom
+                    settingsButton
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 20)
                 }
                 .frame(width: 90)
 
@@ -142,6 +148,8 @@ struct ClipboardOverlayView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .opacity(isDragging ? 0.0 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isDragging)
         .background(
             overlayBackground
                 .onTapGesture {
@@ -152,6 +160,12 @@ struct ClipboardOverlayView: View {
         )
         .onAppear {
             viewModel.initialize()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .startDragging)) { _ in
+            isDragging = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .stopDragging)) { _ in
+            isDragging = false
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.keyboardShortcutNotification)) { _ in
             handleKeyboardInput()
@@ -232,6 +246,35 @@ struct ClipboardOverlayView: View {
         }
     }
 
+    private var settingsButton: some View {
+        Button(action: {
+            openSettings()
+        }) {
+            VStack(spacing: 3) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.secondary)
+                Text("Settings")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary.opacity(0.8))
+                    .lineLimit(1)
+            }
+            .frame(width: 72, height: 40)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            // Optional hover effect can be added here
+        }
+    }
+
     private func filterButton(for filter: ContentFilter) -> some View {
         Button(action: {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -286,6 +329,17 @@ struct ClipboardOverlayView: View {
         // The actual implementation is in the window class
     }
 
+    private func openSettings() {
+        // Close overlay first
+        closeOverlay()
+        // Open settings window
+        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+    }
+
+    func closeOverlay() {
+        NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+    }
+
     // MARK: - Keyboard Navigation Methods
 
     func navigateLeft() {
@@ -324,9 +378,6 @@ struct ClipboardOverlayView: View {
         }
     }
 
-    func closeOverlay() {
-        NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
-    }
 }
 
 // Visual effect view for blur
@@ -354,6 +405,8 @@ extension Notification.Name {
     static let showClipboardOverlay = Notification.Name("showClipboardOverlay")
     static let deleteClipboardItem = Notification.Name("deleteClipboardItem")
     static let pinClipboardItem = Notification.Name("pinClipboardItem")
+    static let startDragging = Notification.Name("startDragging")
+    static let stopDragging = Notification.Name("stopDragging")
 }
 
 extension NSApplication {

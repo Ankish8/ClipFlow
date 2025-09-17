@@ -89,11 +89,14 @@ final class MenuBarManager: NSObject, ObservableObject {
         // Listen for clipboard updates
         clipboardService.itemUpdates
             .sink { [weak self] item in
+                NSLog("📡 MenuBar received clipboard update: \(item.content.contentType)")
                 Task { @MainActor in
                     await self?.updateRecentItems(with: item)
                 }
             }
             .store(in: &cancellables)
+
+        NSLog("📡 MenuBar subscribed to clipboard updates")
 
         // Listen for collection updates
         NotificationCenter.default.addObserver(
@@ -113,6 +116,7 @@ final class MenuBarManager: NSObject, ObservableObject {
             await loadCollections()
         }
     }
+
 
     // MARK: - Popover Management
 
@@ -224,8 +228,9 @@ final class MenuBarManager: NSObject, ObservableObject {
         do {
             let items = try await clipboardService.getRecentItems(limit: maxRecentItems)
             recentItems = items
+            NSLog("📋 MenuBar loaded \(items.count) recent items")
         } catch {
-            print("Failed to load recent items: \(error)")
+            NSLog("❌ Failed to load recent items: \(error.localizedDescription)")
         }
     }
 
@@ -243,6 +248,8 @@ final class MenuBarManager: NSObject, ObservableObject {
 
         // Remove duplicates and limit to max count
         recentItems = Array(recentItems.prefix(maxRecentItems))
+
+        NSLog("📋 MenuBar updated with new item: \(newItem.content.contentType), total items: \(recentItems.count)")
     }
 
     // MARK: - Actions
@@ -261,8 +268,8 @@ final class MenuBarManager: NSObject, ObservableObject {
     }
 
     @objc private func showPreferences() {
-        // Would open preferences window
-        print("Show preferences")
+        // Open the Settings window defined in main.swift
+        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
     }
 
     @objc private func showAbout() {
