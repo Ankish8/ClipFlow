@@ -4,9 +4,7 @@ import ClipFlowCore
 struct ClipboardOverlayView: View {
     @StateObject private var viewModel = ClipboardViewModel()
     @State private var selectedIndex: Int = 0
-    @State private var searchText = ""
     @State private var selectedFilter: ContentFilter = .all
-    @State private var isSearchExpanded = false
 
     enum ContentFilter: String, CaseIterable {
         case all = "All"
@@ -31,13 +29,6 @@ struct ClipboardOverlayView: View {
     var filteredItems: [ClipboardItem] {
         var items = viewModel.items
 
-        // Apply enhanced search filtering
-        if !searchText.isEmpty {
-            items = items.filter { item in
-                fuzzySearch(item: item, query: searchText)
-            }
-        }
-
         // Apply content type filtering
         if selectedFilter != .all {
             items = items.filter { item in
@@ -48,61 +39,19 @@ struct ClipboardOverlayView: View {
         return items
     }
 
-    private func fuzzySearch(item: ClipboardItem, query: String) -> Bool {
-        let lowercaseQuery = query.lowercased()
-
-        // Search in main content
-        let contentText = item.content.displayText.lowercased()
-        if contentText.contains(lowercaseQuery) {
-            return true
-        }
-
-        // Search in source app name
-        if let appName = item.source.applicationName?.lowercased(),
-           appName.contains(lowercaseQuery) {
-            return true
-        }
-
-        // Search in file names for file content
-        if case .file(let fileContent) = item.content {
-            if fileContent.fileName.lowercased().contains(lowercaseQuery) {
-                return true
-            }
-        }
-
-        // Search in URL domains for links
-        if case .link(let linkContent) = item.content {
-            if let host = linkContent.url.host?.lowercased(),
-               host.contains(lowercaseQuery) {
-                return true
-            }
-        }
-
-        // Fuzzy matching - check if query characters appear in order
-        return fuzzyMatch(text: contentText, query: lowercaseQuery)
-    }
-
-    private func fuzzyMatch(text: String, query: String) -> Bool {
-        let textChars = Array(text)
-        let queryChars = Array(query)
-
-        var textIndex = 0
-        var queryIndex = 0
-
-        while textIndex < textChars.count && queryIndex < queryChars.count {
-            if textChars[textIndex] == queryChars[queryIndex] {
-                queryIndex += 1
-            }
-            textIndex += 1
-        }
-
-        return queryIndex == queryChars.count
-    }
 
     private func matches(_ content: ClipboardContent, filter: ContentFilter) -> Bool {
         switch (content, filter) {
-        case (.text, .text), (.richText, .text), (.code, .text), (.snippet, .text):
+        case (.text(let textContent), .text):
+            // Don't show hex colors in text filter since they appear as color cards
+            let text = textContent.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !isHexColor(text)
+        case (.richText, .text), (.code, .text), (.snippet, .text):
             return true
+        case (.text(let textContent), .colors):
+            // Show hex colors in colors filter
+            let text = textContent.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return isHexColor(text)
         case (.image, .images):
             return true
         case (.file, .files):
@@ -116,79 +65,91 @@ struct ClipboardOverlayView: View {
         }
     }
 
+    private func isHexColor(_ text: String) -> Bool {
+        guard text.hasPrefix("#"), text.count == 7 else { return false }
+        let hexValue = String(text.dropFirst())
+        return Int(hexValue, radix: 16) != nil
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                // Top padding for better visual balance
-                Spacer().frame(height: 12)
+            HStack(spacing: 0) {
+                // Left sidebar with content type filters
+                VStack(spacing: 0) {
+                    // Top padding for alignment
+                    Spacer().frame(height: 12)
 
-                // Top controls row
-                HStack {
-                    // Content type filters
+                    // Content type filters (vertical)
                     contentTypeFilters
+                        .padding(.horizontal, 10)
 
                     Spacer()
-
-                    // Compact search
-                    compactSearchButton
                 }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 16)
+                .frame(width: 90)
 
-                // Expanded search bar (conditional)
-                if isSearchExpanded {
-                    expandedSearchBar
-                        .padding(.horizontal, 32)
-                        .padding(.bottom, 16)
-                }
+                // Main content area
+                VStack(spacing: 0) {
+                    // Top padding for better visual balance
+                    Spacer().frame(height: 20)
 
-                // Main cards container - centered and full width
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 16) {
-                            // Leading spacer for centering
-                            if filteredItems.count <= 6 {
-                                Spacer().frame(minWidth: 0)
-                            }
+                    // Additional spacing above cards
+                    Spacer().frame(height: 16)
 
-                            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                                ClipboardCardView(
-                                    item: item,
-                                    index: index + 1,
-                                    isSelected: index == selectedIndex
-                                )
-                                .id(index)
-                                .onTapGesture {
-                                    selectAndPaste(item, index: index)
+                    // Main cards container - centered and full width
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                // Leading spacer for centering
+                                if filteredItems.count <= 6 {
+                                    Spacer().frame(minWidth: 0)
+                                }
+
+                                ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                                    ClipboardCardView(
+                                        item: item,
+                                        index: index + 1,
+                                        isSelected: index == selectedIndex
+                                    )
+                                    .id(index)
+                                    .onTapGesture {
+                                        selectItem(index: index)
+                                    }
+                                }
+
+                                // Trailing spacer for centering
+                                if filteredItems.count <= 6 {
+                                    Spacer().frame(minWidth: 0)
                                 }
                             }
-
-                            // Trailing spacer for centering
-                            if filteredItems.count <= 6 {
-                                Spacer().frame(minWidth: 0)
+                            .padding(.horizontal, 32)
+                            .frame(minWidth: geometry.size.width - 90)
+                        }
+                        .frame(height: 220)
+                        .onChange(of: selectedIndex) { newIndex in
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo(newIndex, anchor: .center)
                             }
                         }
+                    }
+
+                    // Bottom info bar
+                    bottomInfoBar
                         .padding(.horizontal, 32)
-                        .frame(minWidth: geometry.size.width)
-                    }
-                    .frame(height: 160)
-                    .onChange(of: selectedIndex) { newIndex in
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            proxy.scrollTo(newIndex, anchor: .center)
-                        }
-                    }
+
+                    // Bottom padding to stick to screen bottom
+                    Spacer().frame(height: 20)
                 }
-
-                // Bottom info bar
-                bottomInfoBar
-                    .padding(.horizontal, 32)
-
-                // Bottom padding to stick to screen bottom
-                Spacer().frame(height: 12)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(overlayBackground)
+        .background(
+            overlayBackground
+                .onTapGesture {
+                    // Tap on background dismisses overlay
+                    closeOverlay()
+                }
+                .contentShape(Rectangle())
+        )
         .onAppear {
             viewModel.initialize()
         }
@@ -197,52 +158,74 @@ struct ClipboardOverlayView: View {
         }
     }
 
+    @Environment(\.colorScheme) var colorScheme
+
     private var overlayBackground: some View {
         ZStack {
-            // Main dark background - full opacity for that solid Paste look
-            Color.black.opacity(0.92)
-
-            // Subtle gradient for depth
+            // Base neutral gradient tuned for contrast with cards
             LinearGradient(
-                colors: [
-                    Color.black.opacity(0.1),
-                    Color.clear,
-                    Color.black.opacity(0.1)
+                colors: colorScheme == .light ? [
+                    // Slightly darker than before to improve contrast with near-white cards
+                    Color(.sRGB, red: 0.86, green: 0.88, blue: 0.90, opacity: 1.0),
+                    Color(.sRGB, red: 0.80, green: 0.82, blue: 0.85, opacity: 1.0)
+                ] : [
+                    // Slightly lighter midtones so dark cards (0.12) stand out over the center
+                    Color(.sRGB, red: 0.18, green: 0.18, blue: 0.19, opacity: 1.0),
+                    Color(.sRGB, red: 0.12, green: 0.12, blue: 0.13, opacity: 1.0)
                 ],
-                startPoint: .top,
-                endPoint: .bottom
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
 
-            // Top border highlight
-            VStack {
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(height: 1)
-                Spacer()
-            }
-        }
-    }
+            // Subtle center spotlight to lift area behind cards
+            RadialGradient(
+                colors: colorScheme == .light ? [
+                    Color.white.opacity(0.10),
+                    Color.white.opacity(0.0)
+                ] : [
+                    Color.white.opacity(0.06),
+                    Color.white.opacity(0.0)
+                ],
+                center: .center,
+                startRadius: 80,
+                endRadius: 600
+            )
 
+            // Edge vignette to focus attention and enhance perceived contrast
+            LinearGradient(
+                colors: colorScheme == .light ? [
+                    Color.black.opacity(0.06),
+                    Color.clear,
+                    Color.clear,
+                    Color.black.opacity(0.06)
+                ] : [
+                    Color.black.opacity(0.12),
+                    Color.clear,
+                    Color.clear,
+                    Color.black.opacity(0.12)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .blendMode(.multiply)
+        }
+        .ignoresSafeArea()
+    }
 
     private var bottomInfoBar: some View {
         HStack {
             Text("\(filteredItems.count) items")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(.secondary)
 
             Spacer()
 
-            if !filteredItems.isEmpty {
-                Text("⌥⌘V to toggle • ↑↓ Select • Enter Paste • Esc Close")
-                    .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.5))
-            }
         }
         .padding(.vertical, 12)
     }
 
     private var contentTypeFilters: some View {
-        HStack(spacing: 6) {
+        VStack(spacing: 6) {
             ForEach(ContentFilter.allCases, id: \.self) { filter in
                 filterButton(for: filter)
             }
@@ -256,89 +239,37 @@ struct ClipboardOverlayView: View {
                 selectedIndex = 0 // Reset selection when filter changes
             }
         }) {
-            HStack(spacing: 3) {
+            VStack(spacing: 3) {
                 Image(systemName: filter.icon)
-                    .font(.system(size: 10, weight: .medium))
-                if filter == .all || selectedFilter == filter {
-                    Text(filter.rawValue)
-                        .font(.system(size: 10, weight: .medium))
-                }
+                    .font(.system(size: 14, weight: selectedFilter == filter ? .semibold : .medium))
+                    .foregroundColor(selectedFilter == filter ? .accentColor : .secondary)
+
+                Text(filter.rawValue)
+                    .font(.system(size: 9, weight: selectedFilter == filter ? .semibold : .medium))
+                    .foregroundColor(selectedFilter == filter ? .primary : .secondary.opacity(0.8))
+                    .lineLimit(1)
             }
-            .foregroundColor(selectedFilter == filter ? .black : .white.opacity(0.8))
-            .padding(.horizontal, selectedFilter == filter ? 8 : 6)
-            .padding(.vertical, 4)
+            .frame(width: 72, height: 40)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(selectedFilter == filter ? Color.white.opacity(0.9) : Color.white.opacity(0.1))
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(selectedFilter == filter ?
+                        Color.accentColor.opacity(0.12) :
+                        Color.primary.opacity(0.03))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(selectedFilter == filter ?
+                                Color.accentColor.opacity(0.2) :
+                                Color.primary.opacity(0.08),
+                                lineWidth: selectedFilter == filter ? 1.5 : 0.5)
+                    )
             )
         }
         .buttonStyle(PlainButtonStyle())
     }
 
-    private var compactSearchButton: some View {
-        Button(action: {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                isSearchExpanded.toggle()
-            }
-        }) {
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12, weight: .medium))
 
-                if !searchText.isEmpty {
-                    Text("\(searchText.prefix(10))")
-                        .font(.system(size: 10))
-                        .lineLimit(1)
-                }
-            }
-            .foregroundColor(.white.opacity(0.8))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(searchText.isEmpty ? 0.1 : 0.2))
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    private var expandedSearchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.white.opacity(0.6))
-                .font(.system(size: 14))
-
-            TextField("Search clipboard...", text: $searchText)
-                .textFieldStyle(PlainTextFieldStyle())
-                .font(.system(size: 14))
-                .foregroundColor(.white)
-
-            if !searchText.isEmpty {
-                Button(action: {
-                    searchText = ""
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.white.opacity(0.6))
-                        .font(.system(size: 14))
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    isSearchExpanded = false
-                }
-            }) {
-                Image(systemName: "chevron.up")
-                    .foregroundColor(.white.opacity(0.6))
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+    private func selectItem(index: Int) {
+        selectedIndex = index
     }
 
     private func selectAndPaste(_ item: ClipboardItem, index: Int) {

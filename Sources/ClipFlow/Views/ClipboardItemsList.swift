@@ -93,11 +93,8 @@ struct ClipboardItemRow: View {
                         .font(.caption)
                 }
 
-                if item.security.isEncrypted {
-                    Image(systemName: "lock.fill")
-                        .foregroundColor(.blue)
-                        .font(.caption)
-                }
+                // Security features removed for v1
+                // if item.security.isEncrypted { ... }
             }
         }
         .padding(.horizontal, 12)

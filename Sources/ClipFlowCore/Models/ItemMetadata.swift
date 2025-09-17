@@ -291,62 +291,10 @@ public struct ItemTimestamps: Codable, Hashable, Sendable {
 // MARK: - Security Metadata
 
 public struct SecurityMetadata: Codable, Hashable, Sendable {
-    public let isEncrypted: Bool
-    public let isSensitive: Bool
-    public let encryptionKeyID: String?
-    public let accessControl: AccessControl
+    // Simplified security metadata - security features removed for v1
 
-    public init(
-        isEncrypted: Bool = false,
-        isSensitive: Bool = false,
-        encryptionKeyID: String? = nil,
-        accessControl: AccessControl = .public
-    ) {
-        self.isEncrypted = isEncrypted
-        self.isSensitive = isSensitive
-        self.encryptionKeyID = encryptionKeyID
-        self.accessControl = accessControl
+    public init() {
+        // Empty implementation for now
     }
 
-    public static func detectSensitive(from content: ClipboardContent) -> Bool {
-        switch content {
-        case .text(let textContent):
-            return detectSensitiveText(textContent.plainText)
-        case .richText(let richContent):
-            return detectSensitiveText(richContent.plainTextFallback)
-        case .code(let codeContent):
-            return detectSensitiveCode(codeContent.code)
-        default:
-            return false
-        }
-    }
-
-    private static func detectSensitiveText(_ text: String) -> Bool {
-        let sensitivePatterns = [
-            #"(?i)(password|pwd|pass)\s*[:=]\s*\S+"#,
-            #"(?i)(api[_-]?key|token)\s*[:=]\s*\S+"#,
-            #"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"#, // Credit card
-            #"\b\d{3}-\d{2}-\d{4}\b"#, // SSN
-        ]
-
-        return sensitivePatterns.contains { pattern in
-            text.range(of: pattern, options: .regularExpression) != nil
-        }
-    }
-
-    private static func detectSensitiveCode(_ code: String) -> Bool {
-        let codePatterns = [
-            #"(?i)(private[_-]?key|secret[_-]?key)\s*[:=]"#,
-            #"(?i)(client[_-]?secret|app[_-]?secret)\s*[:=]"#,
-            #"-----BEGIN (RSA )?PRIVATE KEY-----"#,
-        ]
-
-        return codePatterns.contains { pattern in
-            code.range(of: pattern, options: .regularExpression) != nil
-        }
-    }
-}
-
-public enum AccessControl: String, Codable, CaseIterable, Sendable {
-    case `public`, `private`, shared, restricted
 }

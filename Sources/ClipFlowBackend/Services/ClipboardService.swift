@@ -13,7 +13,6 @@ public class ClipboardService: ClipboardServiceAPI {
     // Dependencies
     private let monitorService: ClipboardMonitorService
     private let storageService: StorageService
-    private let securityService: SecurityService
     private let performanceMonitor: PerformanceMonitor
 
     // Publishers
@@ -27,11 +26,9 @@ public class ClipboardService: ClipboardServiceAPI {
 
     private init() {
         self.storageService = StorageService()
-        self.securityService = SecurityService.shared
         self.performanceMonitor = PerformanceMonitor.shared
         self.monitorService = ClipboardMonitorService(
             storageService: storageService,
-            securityService: securityService,
             performanceMonitor: performanceMonitor
         )
 
@@ -67,21 +64,21 @@ public class ClipboardService: ClipboardServiceAPI {
 
     private func setupMonitorSubscriptions() async {
         // Subscribe to monitor updates
-        await monitorService.itemUpdates
+        monitorService.itemUpdates
             .sink { [weak self] item in
-                Task { await self?._itemUpdates.send(item) }
+                self?._itemUpdates.send(item)
             }
             .store(in: &cancellables)
 
-        await monitorService.errors
+        monitorService.errors
             .sink { [weak self] error in
-                Task { await self?._errors.send(error) }
+                self?._errors.send(error)
             }
             .store(in: &cancellables)
 
-        await monitorService.status
+        monitorService.status
             .sink { [weak self] status in
-                Task { await self?._statusUpdates.send(status) }
+                self?._statusUpdates.send(status)
             }
             .store(in: &cancellables)
     }
@@ -89,7 +86,7 @@ public class ClipboardService: ClipboardServiceAPI {
     // MARK: - Core Operations
 
     public func startMonitoring() async throws {
-        try await performanceMonitor.measure(operation: "start_monitoring") {
+        await performanceMonitor.measure(operation: "start_monitoring") {
             await monitorService.startMonitoring()
         }
     }
@@ -466,5 +463,36 @@ public class ClipboardService: ClipboardServiceAPI {
             isFavorite: filter.isFavorite,
             isPinned: filter.isPinned
         )
+    }
+
+    // MARK: - Convenience Methods for UI
+
+    public func getRecentItems(limit: Int) async throws -> [ClipboardItem] {
+        return try await getHistory(offset: 0, limit: limit, filter: nil)
+    }
+
+    public func getCollections() async throws -> [Collection] {
+        // Collections not implemented yet - return empty array for v1
+        return []
+    }
+
+    public func pasteItem(_ item: ClipboardItem) async {
+        do {
+            try await paste(item, transform: nil)
+        } catch {
+            _errors.send(.processingFailed(error))
+        }
+    }
+
+    public func addItemToCollection(_ itemId: UUID, collectionId: UUID) async throws {
+        // Collections not implemented yet - no-op for v1
+    }
+
+    public func searchItems(query: String, limit: Int) async throws -> [ClipboardItem] {
+        return try await search(query: query, scope: .all, limit: limit)
+    }
+
+    public func deleteItem(_ itemId: UUID) async throws {
+        try await deleteItems(ids: [itemId])
     }
 }

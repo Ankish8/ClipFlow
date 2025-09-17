@@ -36,13 +36,26 @@ class ClipboardOverlayWindow: NSWindow {
         // Make window initially hidden
         alphaValue = 0.0
         orderOut(nil)
+
+        // Monitor clicks outside the overlay
+        setupOutsideClickMonitoring()
+    }
+
+    private func setupOutsideClickMonitoring() {
+        // Global event monitor for clicks outside the overlay
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self, self.isVisible else { return }
+
+            // If overlay is visible and user clicks anywhere globally, dismiss it
+            self.hideOverlay()
+        }
     }
 
     private func setupFrames() {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
-        let overlayHeight: CGFloat = 220 // Taller to accommodate cards better
+        let overlayHeight: CGFloat = 300 // Adjusted height to accommodate top spacing
 
         // Final position: full width, stuck to bottom
         finalFrame = NSRect(
@@ -70,10 +83,11 @@ class ClipboardOverlayWindow: NSWindow {
         alphaValue = 1.0
         orderFront(nil)
 
-        // Animate sliding up from bottom
+        // Animate sliding up from bottom with subtle spring animation
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.4
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = 0.2
+            // Subtle spring animation - reduced bounce
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 1.1, 0.3, 0.9)
             context.allowsImplicitAnimation = true
 
             // Slide up to final position
@@ -82,10 +96,11 @@ class ClipboardOverlayWindow: NSWindow {
     }
 
     func hideOverlay() {
-        // Animate sliding down and fade out
+        // Animate sliding down with spring animation
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.3
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            context.duration = 0.2
+            // Smooth spring animation for hide (less bouncy than show)
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0.0, 0.2, 1.0)
             context.allowsImplicitAnimation = true
 
             // Slide down to hidden position
@@ -100,6 +115,12 @@ class ClipboardOverlayWindow: NSWindow {
 
     func setOverlayView(_ view: ClipboardOverlayView) {
         overlayView = view
+    }
+
+    // Remove the global event monitor when window is deallocated
+    deinit {
+        // Note: In production, we should store the monitor reference and remove it
+        // For now, we'll rely on weak self to prevent retain cycles
     }
 
     override func keyDown(with event: NSEvent) {

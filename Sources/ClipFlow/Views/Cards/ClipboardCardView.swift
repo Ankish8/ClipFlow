@@ -23,19 +23,30 @@ struct ClipboardCardView: View {
             // Metadata footer
             cardFooter
         }
-        .frame(width: cardWidth, height: 140)
+        .frame(width: cardWidth, height: 250)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(isSelected ? Color.white.opacity(0.3) : Color.clear, lineWidth: 1)
+                .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
         )
-        .scaleEffect(isSelected ? 1.05 : 1.0)
+        .scaleEffect(isSelected ? 1.02 : 1.0)
+        .offset(y: isHovering ? -1 : 0) // transform: translateY(-1px)
         .shadow(
-            color: Color.black.opacity(isSelected ? 0.3 : 0.15),
-            radius: isSelected ? 6 : 3,
+            color: colorScheme == .light ?
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.05 : 0.0) : // rgba(0, 0, 0, 0.05)
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.3 : 0.0),
+            radius: isHovering ? 6 : 0,
             x: 0,
-            y: 2
+            y: isHovering ? 4 : 0
+        )
+        .shadow(
+            color: colorScheme == .light ?
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.08 : 0.0) : // rgba(0, 0, 0, 0.08)
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.2 : 0.0),
+            radius: isHovering ? 3 : 0,
+            x: 0,
+            y: isHovering ? 1 : 0
         )
         .animation(.easeInOut(duration: 0.2), value: isSelected)
         .onHover { hovering in
@@ -51,63 +62,68 @@ struct ClipboardCardView: View {
     }
 
     private var cardWidth: CGFloat {
-        switch item.content {
-        case .image:
-            return 180
-        case .file:
-            return 200
-        case .link:
-            return 220
-        case .richText:
-            return 240
-        default:
-            return 200
-        }
+        return 235  // Uniform width for all card types
     }
+
+    @Environment(\.colorScheme) var colorScheme
 
     private var cardBackground: some View {
         ZStack {
-            // Base background - subtle and clean
-            Color.white.opacity(0.08)
-
-            // Very subtle content type hint
+            // Strong card background like Paste app
             RoundedRectangle(cornerRadius: 12)
-                .fill(contentTypeInfo.color.opacity(0.03))
+                .fill(colorScheme == .light ?
+                    Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.95) : // Much more opaque
+                    Color(.sRGB, red: 0.12, green: 0.12, blue: 0.12, opacity: 0.95)  // Strong dark cards
+                )
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.thinMaterial) // Subtle blur behind
+                )
 
-            // Minimal border for definition
+            // Strong border for clear definition
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                .stroke(colorScheme == .light ?
+                    Color(.sRGB, red: 0.85, green: 0.87, blue: 0.9, opacity: 1.0) : // Solid border
+                    Color(.sRGB, red: 0.3, green: 0.3, blue: 0.3, opacity: 1.0),
+                    lineWidth: 1
+                )
         }
+        .shadow(
+            color: colorScheme == .light ?
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.12) : // Much stronger shadow
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.4),
+            radius: 8,
+            x: 0,
+            y: 4
+        )
+        .shadow(
+            color: colorScheme == .light ?
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.08) : // Secondary shadow
+                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.2),
+            radius: 3,
+            x: 0,
+            y: 2
+        )
     }
 
     private var cardHeader: some View {
         HStack {
-            // Subtle content type indicator
-            HStack(spacing: 3) {
-                Image(systemName: contentTypeInfo.icon)
-                    .font(.system(size: 9, weight: .medium))
-                Text(contentTypeInfo.name)
-                    .font(.system(size: 9, weight: .medium))
-            }
-            .foregroundColor(.white.opacity(0.8))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(Color.white.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: 3))
+            // Subtle content type badge
+            Text(contentTypeInfo.name.uppercased())
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(contentTypeInfo.color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(contentTypeInfo.color.opacity(0.08))
+                )
 
             Spacer()
-
-            // Subtle index number
-            Text("\(index)")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.6))
-                .frame(width: 14, height: 14)
-                .background(Color.white.opacity(0.1))
-                .clipShape(Circle())
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
     }
 
     private var contentPreview: some View {
@@ -133,35 +149,42 @@ struct ClipboardCardView: View {
                 MultiPreviewCard(content: multiContent)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
     }
 
     private var cardFooter: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(spacing: 0) {
+            // Exact divider from HTML reference
+            Rectangle()
+                .fill(colorScheme == .light ?
+                    Color(.sRGB, red: 0.886, green: 0.91, blue: 0.941, opacity: 0.5) : // rgba(226, 232, 240, 0.5)
+                    Color(.sRGB, red: 0.4, green: 0.4, blue: 0.4, opacity: 0.3)
+                )
+                .frame(height: 1)
+
             HStack {
-                // Metadata (character count, file size, etc.)
+                // Metadata - exact colors from HTML reference
                 Text(metadataText)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(colorScheme == .light ?
+                        Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) : // #94a3b8
+                        Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
+                    )
 
                 Spacer()
 
-                // Source app icon if available
-                if let appName = item.source.applicationName {
-                    Text(appName)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
+                // Timestamp - exact colors from HTML reference
+                Text(timeAgoText)
+                    .font(.system(size: 11))
+                    .foregroundColor(colorScheme == .light ?
+                        Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) : // #94a3b8
+                        Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
+                    )
             }
-
-            // Timestamp
-            Text(timeAgoText)
-                .font(.system(size: 9))
-                .foregroundColor(.secondary.opacity(0.8))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 6)
     }
 
     private var metadataText: String {
@@ -207,7 +230,7 @@ struct ClipboardCardView: View {
     // MARK: - Quick Actions
 
     private var quickActionButtons: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             // Copy action
             quickActionButton(icon: "doc.on.doc", action: copyItem)
 
@@ -218,21 +241,28 @@ struct ClipboardCardView: View {
             quickActionButton(icon: "star", action: pinItem)
         }
         .padding(6)
-        .background(Color.black.opacity(0.7))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.ultraThinMaterial)
+                .opacity(0.8)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(6)
     }
 
     private func quickActionButton(icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(.white.opacity(0.9))
-                .frame(width: 18, height: 18)
+                .frame(width: 20, height: 20)
         }
         .buttonStyle(PlainButtonStyle())
-        .background(Color.white.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.white.opacity(0.15))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 4))
         .onHover { hovering in
             // Add slight scale effect on hover
         }
@@ -281,7 +311,12 @@ struct ContentTypeInfo {
 
     static func from(_ content: ClipboardContent) -> ContentTypeInfo {
         switch content {
-        case .text:
+        case .text(let textContent):
+            // Check if text is a hex color
+            let text = textContent.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isHexColor(text) {
+                return ContentTypeInfo(name: "Color", icon: "paintpalette", color: .pink)
+            }
             return ContentTypeInfo(name: "Text", icon: "doc.text", color: .blue)
         case .richText:
             return ContentTypeInfo(name: "Rich Text", icon: "doc.richtext", color: .purple)
@@ -300,5 +335,13 @@ struct ContentTypeInfo {
         case .multiple:
             return ContentTypeInfo(name: "Multiple", icon: "square.stack", color: .gray)
         }
+    }
+
+    private static func isHexColor(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("#"), trimmed.count == 7 else { return false }
+
+        let hexValue = String(trimmed.dropFirst())
+        return Int(hexValue, radix: 16) != nil
     }
 }

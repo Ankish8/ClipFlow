@@ -170,7 +170,7 @@ public enum ClipboardError: Error {
     case invalidInput(String)
 }
 
-public struct ClipboardStatistics {
+public struct ClipboardStatistics: Sendable {
     public let totalItemsProcessed: Int
     public let detectionErrors: Int
     public let lastDetectionTime: Date?

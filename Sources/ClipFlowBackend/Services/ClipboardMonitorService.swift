@@ -25,7 +25,6 @@ public class ClipboardMonitorService {
 
     // Dependencies
     private let storageService: StorageService
-    private let securityService: SecurityService
     private let performanceMonitor: PerformanceMonitor
 
     // Statistics
@@ -51,11 +50,9 @@ public class ClipboardMonitorService {
 
     public init(
         storageService: StorageService,
-        securityService: SecurityService,
         performanceMonitor: PerformanceMonitor = PerformanceMonitor.shared
     ) {
         self.storageService = storageService
-        self.securityService = securityService
         self.performanceMonitor = performanceMonitor
     }
 
@@ -185,23 +182,60 @@ public class ClipboardMonitorService {
     private func processClipboardContent(_ pasteboard: NSPasteboard) async -> ClipboardItem? {
         guard let types = pasteboard.types, !types.isEmpty else { return nil }
 
+        // Enhanced debug logging to understand what types are present
+        print("🔍 Clipboard types found: \(types.map { $0.rawValue })")
+
+        // Check for file URLs specifically
+        if types.contains(.fileURL) {
+            if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+                let fileURLs = urls.filter { $0.isFileURL }
+                print("📁 Found \(fileURLs.count) file URLs: \(fileURLs.map { $0.lastPathComponent })")
+            }
+        }
+
+        // Check what string content we have
+        if types.contains(.string) {
+            if let stringContent = pasteboard.string(forType: .string) {
+                let preview = stringContent.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100)
+                print("📄 String content preview: \"\(preview)\"")
+            }
+        }
+
         let content: ClipboardContent?
 
-        // Priority order for content detection
-        if types.contains(.png) || types.contains(.tiff) {
-            content = await processImageContent(pasteboard)
-        } else if types.contains(.fileURL) {
+        // Priority order for content detection - files MUST come first before images
+        if types.contains(.fileURL) {
+            print("📁 Processing as file content (highest priority)")
             content = await processFileContent(pasteboard)
+            // If file processing fails, don't fall back to image processing for file types
+            if content == nil {
+                print("❌ File processing failed, but not falling back to image processing")
+                return nil
+            }
         } else if types.contains(.URL) {
+            print("🔗 Processing as URL content")
             content = await processURLContent(pasteboard)
+        } else if types.contains(.png) || types.contains(.tiff) {
+            print("🖼️ Processing as image content")
+            content = await processImageContent(pasteboard)
         } else if types.contains(.rtf) {
+            print("📝 Processing as rich text content")
             content = await processRichTextContent(pasteboard)
         } else if types.contains(.string) {
+            print("📄 Processing as text content")
             content = await processTextContent(pasteboard)
         } else if types.contains(.color) {
+            print("🎨 Processing as color content")
             content = await processColorContent(pasteboard)
         } else {
+            print("❓ Processing as generic content")
             content = await processGenericContent(pasteboard, types: types)
+        }
+
+        if let clipboardContent = content {
+            print("✅ Content classified as: \(clipboardContent.contentType)")
+        } else {
+            print("❌ Failed to process clipboard content")
         }
 
         guard let clipboardContent = content else { return nil }
@@ -218,6 +252,23 @@ public class ClipboardMonitorService {
 
     private func processTextContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
         guard let text = pasteboard.string(forType: .string) else { return nil }
+
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("📄 Text content: \"\(trimmedText.prefix(50))...\"")
+
+        // Check if it's a URL first - prioritize URL detection
+        print("🔍 Checking if text is URL: \(trimmedText.isValidURL)")
+        if trimmedText.isValidURL, let url = URL(string: trimmedText) {
+            print("🔗 Converting text to link content for URL: \(url)")
+            let (title, description, favicon, preview) = await fetchURLMetadata(url)
+            return .link(LinkContent(
+                url: url,
+                title: title,
+                description: description,
+                faviconData: favicon,
+                previewImageData: preview
+            ))
+        }
 
         let textContent = TextContent(
             plainText: text,
@@ -303,18 +354,31 @@ public class ClipboardMonitorService {
     }
 
     private func processFileContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
+        print("📁 Entering processFileContent...")
+
         guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] else {
+            print("❌ No URLs found in pasteboard")
             return nil
         }
 
+        print("📁 Found \(urls.count) URLs: \(urls.map { $0.absoluteString })")
+
         let fileURLs = urls.filter { $0.isFileURL }
-        guard !fileURLs.isEmpty else { return nil }
+        print("📁 Filtered to \(fileURLs.count) file URLs: \(fileURLs.map { $0.path })")
+
+        guard !fileURLs.isEmpty else {
+            print("❌ No file URLs after filtering")
+            return nil
+        }
 
         let totalSize = fileURLs.reduce(Int64(0)) { sum, url in
             do {
                 let resources = try url.resourceValues(forKeys: [.fileSizeKey])
-                return sum + Int64(resources.fileSize ?? 0)
+                let size = Int64(resources.fileSize ?? 0)
+                print("📁 File \(url.lastPathComponent) size: \(size) bytes")
+                return sum + size
             } catch {
+                print("❌ Failed to get size for \(url.lastPathComponent): \(error)")
                 return sum
             }
         }
@@ -325,8 +389,12 @@ public class ClipboardMonitorService {
 
         let fileType = fileURLs.first?.pathExtension ?? "mixed"
         let isDirectory = fileURLs.allSatisfy { url in
-            (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            let result = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            print("📁 \(url.lastPathComponent) isDirectory: \(result)")
+            return result
         }
+
+        print("📁 Creating FileContent - fileName: \(fileName), fileType: \(fileType), totalSize: \(totalSize), isDirectory: \(isDirectory)")
 
         return .file(FileContent(
             urls: fileURLs,
@@ -382,26 +450,8 @@ public class ClipboardMonitorService {
     }
 
     private func applySecurityChecks(_ item: ClipboardItem) async -> ClipboardItem {
-        var secureItem = item
-
-        // Detect sensitive content
-        let isSensitive = SecurityMetadata.detectSensitive(from: item.content)
-
-        // Apply encryption if needed
-        let shouldEncryptFromSecurity = await securityService.shouldEncrypt(item)
-        let shouldEncrypt = isSensitive || shouldEncryptFromSecurity
-
-        if shouldEncrypt {
-            // Encrypt the item (implementation would depend on SecurityService)
-            // For now, just mark it as sensitive
-            secureItem.security = SecurityMetadata(
-                isEncrypted: false, // Would be true after encryption
-                isSensitive: isSensitive,
-                accessControl: isSensitive ? .private : .public
-            )
-        }
-
-        return secureItem
+        // Security features removed for v1 - no processing needed
+        return item
     }
 
     private func getCurrentApplicationInfo() async -> ItemSource {
@@ -514,25 +564,6 @@ public class ClipboardMonitorService {
 
 
 
-// MARK: - String Extensions
-
-private extension String {
-    var isValidEmail: Bool {
-        let emailRegex = #"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"#
-        return range(of: emailRegex, options: .regularExpression) != nil
-    }
-
-    var isValidPhoneNumber: Bool {
-        let phoneRegex = #"^[\+]?[1-9][\d]{0,15}$"#
-        let cleaned = components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
-        return cleaned.range(of: phoneRegex, options: .regularExpression) != nil
-    }
-
-    var isValidURL: Bool {
-        guard let url = URL(string: self) else { return false }
-        return url.scheme != nil && !url.scheme!.isEmpty
-    }
-}
 
 // MARK: - NSImage Extensions
 

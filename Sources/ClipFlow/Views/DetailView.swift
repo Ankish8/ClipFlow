@@ -360,10 +360,8 @@ struct MetadataFooter: View {
 
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("Hash: \(String(item.metadata.hash.prefix(8)))")
-                    if item.security.isEncrypted {
-                        Text("🔒 Encrypted")
-                            .foregroundColor(.blue)
-                    }
+                    // Security features removed for v1
+                    // if item.security.isEncrypted { ... }
                 }
             }
             .font(.caption2)

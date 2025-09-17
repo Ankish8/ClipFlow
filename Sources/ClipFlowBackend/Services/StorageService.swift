@@ -46,7 +46,7 @@ public class StorageService {
             try await databaseManager.saveItem(modifiedItem)
 
             // Cache the item
-            await cacheManager.cache(modifiedItem)
+            await cacheManager.cacheItem(modifiedItem, hash: modifiedItem.metadata.hash)
 
             // Update statistics
             totalItemsStored += 1
@@ -64,7 +64,7 @@ public class StorageService {
     public func getItem(id: UUID) async throws -> ClipboardItem? {
         return try await performanceMonitor.measure(operation: "get_item") {
             // Check cache first
-            if let cachedItem = await cacheManager.get(id) {
+            if let cachedItem = await cacheManager.getItem(id: id) {
                 cacheHits += 1
 
                 // Update access time
@@ -90,7 +90,7 @@ public class StorageService {
             try await databaseManager.updateItem(item)
 
             // Cache for future access
-            await cacheManager.cache(item)
+            await cacheManager.cacheItem(item, hash: item.metadata.hash)
 
             return item
         }
@@ -112,7 +112,7 @@ public class StorageService {
 
                 // Cache frequently accessed items
                 if item.isPinned || item.isFavorite {
-                    await cacheManager.cache(item)
+                    await cacheManager.cacheItem(item, hash: item.metadata.hash)
                 }
             }
 
@@ -129,7 +129,7 @@ public class StorageService {
             for var item in items {
                 item = await loadLargeContent(item)
                 searchResults.append(item)
-                await cacheManager.cache(item)
+                await cacheManager.cacheItem(item, hash: item.metadata.hash)
             }
 
             return searchResults
@@ -145,7 +145,7 @@ public class StorageService {
             try await databaseManager.updateItem(updatedItem)
 
             // Update cache
-            await cacheManager.cache(updatedItem)
+            await cacheManager.cacheItem(updatedItem, hash: updatedItem.metadata.hash)
         }
     }
 
@@ -154,7 +154,7 @@ public class StorageService {
             if permanent {
                 // Remove from cache
                 for id in ids {
-                    await cacheManager.remove(id)
+                    await cacheManager.removeItem(id: id)
                 }
 
                 // Remove large content files
@@ -195,9 +195,21 @@ public class StorageService {
     // MARK: - Storage Statistics
 
     public func getStorageStatistics() async -> StorageStatistics {
-        let cacheStats = await cacheManager.getStatistics()
+        let advancedCacheStats = await cacheManager.getAdvancedStatistics()
         let databaseSize = await getDatabaseSize()
         let largeContentSize = await getLargeContentSize()
+
+        // Convert AdvancedCacheStatistics to CacheStatistics
+        let cacheStats = CacheStatistics(
+            itemCount: advancedCacheStats.memoryItems + advancedCacheStats.diskItems,
+            collectionCount: 0, // Collections not tracked separately
+            memoryUsageBytes: advancedCacheStats.memoryUsageBytes,
+            maxMemoryBytes: advancedCacheStats.maxMemoryBytes,
+            hitRate: advancedCacheStats.overallHitRate,
+            totalHits: advancedCacheStats.totalHits,
+            totalMisses: advancedCacheStats.totalMisses,
+            totalEvictions: advancedCacheStats.totalEvictions
+        )
 
         return StorageStatistics(
             totalItemsStored: totalItemsStored,
