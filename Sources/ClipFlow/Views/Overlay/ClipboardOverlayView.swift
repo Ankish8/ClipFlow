@@ -93,14 +93,14 @@ struct ClipboardOverlayView: View {
                 // Left sidebar with content type filters
                 VStack(spacing: 0) {
                     Spacer()
-                        .frame(minHeight: 40)
+                        .frame(minHeight: 20)
 
-                    // Content type filters (vertical) - evenly spaced
+                    // Content type filters (vertical) - compact spacing
                     contentTypeFilters
                         .padding(.horizontal, 10)
 
                     Spacer()
-                        .frame(minHeight: 40)
+                        .frame(minHeight: 20)
                 }
                 .frame(width: 90)
 
@@ -254,7 +254,7 @@ struct ClipboardOverlayView: View {
     }
 
     private var contentTypeFilters: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             ForEach(ContentFilter.allCases, id: \.self) { filter in
                 filterButton(for: filter)
             }

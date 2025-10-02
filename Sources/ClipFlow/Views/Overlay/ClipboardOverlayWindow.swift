@@ -55,7 +55,7 @@ class ClipboardOverlayWindow: NSWindow {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
-        let overlayHeight: CGFloat = 380 // Increased height to show all filters and content
+        let overlayHeight: CGFloat = 300 // Compact height - internal spacing optimized
 
         // Final position: full width, stuck to bottom
         finalFrame = NSRect(
