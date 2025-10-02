@@ -15,14 +15,10 @@ final class MenuBarManager: NSObject, ObservableObject {
 
     // MARK: - AppKit Components
     private var statusItem: NSStatusItem?
-    private var popover: NSPopover?
-    private var eventMonitor: EventMonitor?
 
     // MARK: - State Management
-    @Published var isPopoverVisible = false
     @Published var recentItems: [ClipboardItem] = []
     @Published var collections: [Collection] = []
-    @Published var searchText = ""
 
     // MARK: - Services
     private let clipboardService = ClipboardService.shared
@@ -31,13 +27,10 @@ final class MenuBarManager: NSObject, ObservableObject {
 
     // MARK: - Configuration
     private let maxRecentItems = 10
-    private let popoverWidth: CGFloat = 380
-    private let popoverHeight: CGFloat = 500
 
     private override init() {
         super.init()
         setupMenuBar()
-        setupEventMonitor()
         setupNotifications()
         loadInitialData()
     }
@@ -60,29 +53,16 @@ final class MenuBarManager: NSObject, ObservableObject {
             image?.isTemplate = true // Adapts to light/dark mode
             button.image = image
 
-            // Set up click handling
+            // Set up click handling - only context menu on right click
             button.action = #selector(statusItemClicked)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
             // Accessibility
-            button.toolTip = "ClipFlow - Clipboard Manager"
+            button.toolTip = "ClipFlow - Clipboard Manager (⌥⌘V to open)"
         }
 
         print("✅ Menu bar status item created successfully")
-    }
-
-    private func setupEventMonitor() {
-        eventMonitor = EventMonitor(mask: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
-            guard let self = self, self.isPopoverVisible else { return }
-
-            // Close popover when clicking outside or pressing escape
-            if event.type == .keyDown && event.keyCode == 53 { // Escape key
-                self.hidePopover()
-            } else if event.type == .leftMouseDown || event.type == .rightMouseDown {
-                self.hidePopover()
-            }
-        }
     }
 
     private func setupNotifications() {
@@ -118,75 +98,18 @@ final class MenuBarManager: NSObject, ObservableObject {
     }
 
 
-    // MARK: - Popover Management
+    // MARK: - Menu Bar Click Handling
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
-        guard let event = NSApp.currentEvent else { return }
-
-        if event.type == .rightMouseUp {
-            showContextMenu()
-        } else {
-            togglePopover()
-        }
-    }
-
-    private func togglePopover() {
-        if isPopoverVisible {
-            hidePopover()
-        } else {
-            showPopover()
-        }
-    }
-
-    @objc func showPopover() {
-        guard let statusButton = statusItem?.button else { return }
-
-        if popover == nil {
-            createPopover()
-        }
-
-        guard let popover = popover else { return }
-
-        // Update data before showing
-        Task {
-            await loadRecentItems()
-            await loadCollections()
-        }
-
-        popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
-        isPopoverVisible = true
-        eventMonitor?.start()
-
-        // Ensure popover gets focus for keyboard navigation
-        popover.contentViewController?.view.window?.makeKey()
-    }
-
-    func hidePopover() {
-        popover?.performClose(nil)
-        isPopoverVisible = false
-        eventMonitor?.stop()
-    }
-
-    private func createPopover() {
-        popover = NSPopover()
-        popover?.contentSize = NSSize(width: popoverWidth, height: popoverHeight)
-        popover?.behavior = .transient
-        popover?.delegate = self
-
-        // Create SwiftUI content embedded in AppKit
-        let contentView = MenuBarContentView(manager: self)
-        let hostingController = NSHostingController(rootView: contentView)
-        hostingController.view.frame.size = popover?.contentSize ?? .zero
-
-        popover?.contentViewController = hostingController
+        // Always show context menu on any click
+        showContextMenu()
     }
 
     private func showContextMenu() {
         let menu = NSMenu()
 
         // Quick Actions
-        menu.addItem(NSMenuItem(title: "Show Overlay", action: #selector(showOverlay), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Show History", action: #selector(showPopover), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Show Overlay (⌥⌘V)", action: #selector(showOverlay), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
 
         // Recent items submenu
@@ -254,7 +177,7 @@ final class MenuBarManager: NSObject, ObservableObject {
 
     // MARK: - Actions
 
-    @objc private func showOverlay() {
+    @objc func showOverlay() {
         overlayManager.showOverlay()
     }
 
@@ -279,8 +202,6 @@ final class MenuBarManager: NSObject, ObservableObject {
     // MARK: - Public Interface
 
     func pasteSelectedItem(_ item: ClipboardItem) {
-        hidePopover()
-
         Task {
             await clipboardService.pasteItem(item)
         }
@@ -312,50 +233,7 @@ final class MenuBarManager: NSObject, ObservableObject {
     // MARK: - Cleanup
 
     func cleanup() {
-        eventMonitor?.stop()
-        hidePopover()
         statusItem = nil
-    }
-}
-
-// MARK: - NSPopoverDelegate
-
-extension MenuBarManager: NSPopoverDelegate {
-    func popoverDidClose(_ notification: Notification) {
-        isPopoverVisible = false
-        eventMonitor?.stop()
-    }
-
-    func popoverShouldDetach(_ popover: NSPopover) -> Bool {
-        return false // Keep as popover, don't detach to window
-    }
-}
-
-// MARK: - Event Monitor
-
-private class EventMonitor {
-    private var monitor: Any?
-    private let mask: NSEvent.EventTypeMask
-    private let handler: (NSEvent) -> Void
-
-    init(mask: NSEvent.EventTypeMask, handler: @escaping (NSEvent) -> Void) {
-        self.mask = mask
-        self.handler = handler
-    }
-
-    deinit {
-        stop()
-    }
-
-    func start() {
-        monitor = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handler)
-    }
-
-    func stop() {
-        if let monitor = monitor {
-            NSEvent.removeMonitor(monitor)
-            self.monitor = nil
-        }
     }
 }
 
