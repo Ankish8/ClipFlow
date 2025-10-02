@@ -93,12 +93,14 @@ struct ClipboardOverlayView: View {
                 // Left sidebar with content type filters
                 VStack(spacing: 0) {
                     Spacer()
+                        .frame(minHeight: 40)
 
-                    // Content type filters (vertical) - centered
+                    // Content type filters (vertical) - evenly spaced
                     contentTypeFilters
                         .padding(.horizontal, 10)
 
                     Spacer()
+                        .frame(minHeight: 40)
                 }
                 .frame(width: 90)
 
