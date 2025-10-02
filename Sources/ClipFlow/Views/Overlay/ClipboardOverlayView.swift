@@ -92,19 +92,13 @@ struct ClipboardOverlayView: View {
             HStack(spacing: 0) {
                 // Left sidebar with content type filters
                 VStack(spacing: 0) {
-                    // Top padding for alignment
-                    Spacer().frame(height: 12)
+                    Spacer()
 
-                    // Content type filters (vertical)
+                    // Content type filters (vertical) - centered
                     contentTypeFilters
                         .padding(.horizontal, 10)
 
                     Spacer()
-
-                    // Settings button at bottom
-                    settingsButton
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 20)
                 }
                 .frame(width: 90)
 
@@ -258,39 +252,10 @@ struct ClipboardOverlayView: View {
     }
 
     private var contentTypeFilters: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 12) {
             ForEach(ContentFilter.allCases, id: \.self) { filter in
                 filterButton(for: filter)
             }
-        }
-    }
-
-    private var settingsButton: some View {
-        Button(action: {
-            openSettings()
-        }) {
-            VStack(spacing: 3) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.secondary)
-                Text("Settings")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.8))
-                    .lineLimit(1)
-            }
-            .frame(width: 72, height: 40)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.primary.opacity(0.03))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            // Optional hover effect can be added here
         }
     }
 
@@ -346,14 +311,6 @@ struct ClipboardOverlayView: View {
     private func handleKeyboardInput() {
         // This will be called from the window's keyDown events
         // The actual implementation is in the window class
-    }
-
-
-    private func openSettings() {
-        // Close overlay first
-        closeOverlay()
-        // Open settings window
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
     }
 
     func closeOverlay() {
