@@ -166,10 +166,15 @@ final class MenuBarManager: NSObject, ObservableObject {
     }
 
     private func updateRecentItems(with newItem: ClipboardItem) async {
+        // Remove any existing duplicates first (by ID or hash)
+        recentItems.removeAll { existingItem in
+            existingItem.id == newItem.id || existingItem.metadata.hash == newItem.metadata.hash
+        }
+
         // Add new item to the beginning
         recentItems.insert(newItem, at: 0)
 
-        // Remove duplicates and limit to max count
+        // Limit to max count
         recentItems = Array(recentItems.prefix(maxRecentItems))
 
         NSLog("📋 MenuBar updated with new item: \(newItem.content.contentType), total items: \(recentItems.count)")

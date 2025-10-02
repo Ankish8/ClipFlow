@@ -18,6 +18,10 @@ public class ClipboardMonitorService {
     private var isMonitoring = false
     private var pollingInterval: TimeInterval = 0.15
 
+    // Self-write prevention
+    private var isMonitoringPaused = false
+    private var lastInternalWriteHash: String? = nil
+
     // Publishers for reactive updates
     private let itemSubject = PassthroughSubject<ClipboardItem, Never>()
     private let errorSubject = PassthroughSubject<ClipboardError, Never>()
@@ -92,6 +96,23 @@ public class ClipboardMonitorService {
         statusSubject.send(.stopped)
     }
 
+    // MARK: - Self-Write Prevention
+
+    public func pauseMonitoring() {
+        isMonitoringPaused = true
+        NSLog("⏸️ Clipboard monitoring paused (internal write)")
+    }
+
+    public func resumeMonitoring() {
+        isMonitoringPaused = false
+        NSLog("▶️ Clipboard monitoring resumed")
+    }
+
+    public func notifyInternalWrite(hash: String) {
+        lastInternalWriteHash = hash
+        NSLog("📝 Notified of internal write with hash: \(hash.prefix(16))...")
+    }
+
     public func forceCheck() async -> ClipboardItem? {
         return await performanceMonitor.measure(operation: "force_check") {
             await checkClipboard(force: true)
@@ -115,10 +136,19 @@ public class ClipboardMonitorService {
 
     @discardableResult
     private func checkClipboard(force: Bool = false) async -> ClipboardItem? {
+        // Skip if monitoring is paused (internal write in progress)
+        guard !isMonitoringPaused else {
+            NSLog("⏸️ Skipping clipboard check - monitoring paused")
+            return nil
+        }
+
         let pasteboard = NSPasteboard.general
         let changeCount = pasteboard.changeCount
 
         guard force || changeCount != lastChangeCount else { return nil }
+
+        // CRITICAL FIX: Always update lastChangeCount BEFORE processing
+        // This prevents duplicate processing when force check and timer check race
         lastChangeCount = changeCount
 
         do {
@@ -135,6 +165,14 @@ public class ClipboardMonitorService {
                 return nil
             }
             NSLog("✅ processClipboardContent returned successfully with item: \(item.content.contentType)")
+
+            // Check for internal write (our own paste/copy action)
+            if let internalHash = lastInternalWriteHash, item.metadata.hash == internalHash {
+                NSLog("🔄 Detected internal write - skipping (hash: \(internalHash.prefix(16))...)")
+                lastInternalWriteHash = nil  // Clear after use
+                lastHash = item.metadata.hash  // Update lastHash to prevent future duplicates
+                return nil
+            }
 
             // Check for duplicates
             NSLog("🔍 Checking duplicates: force=\(force), lastHash=\(lastHash), newHash=\(item.metadata.hash)")

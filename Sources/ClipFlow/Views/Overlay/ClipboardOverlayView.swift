@@ -160,8 +160,8 @@ struct ClipboardOverlayView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .opacity(isDragging ? 0.0 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: isDragging)
+        // REMOVED: .opacity(isDragging ? 0.0 : 1.0) - was hiding entire overlay during drag
+        // Drag preview is handled by SwiftUI's .draggable modifier
         .background(
             overlayBackground
                 .onTapGesture {

@@ -11,6 +11,7 @@ struct ClipboardCardView: View {
     @State private var hoveredButton: String? = nil
     @State private var isDeleting = false
     @State private var cachedImagePath: String? = nil
+    @State private var showCopyFeedback = false
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -37,9 +38,11 @@ struct ClipboardCardView: View {
         )
         .scaleEffect(isSelected ? 1.02 : 1.0)
         .scaleEffect(isDeleting ? 0.8 : 1.0)
+        .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .offset(y: isHovering ? -1 : 0) // transform: translateY(-1px)
         .offset(y: isDeleting ? -20 : 0)
         .opacity(isDeleting ? 0 : 1)
+        .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .shadow(
             color: colorScheme == .light ?
                 Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.05 : 0.0) : // rgba(0, 0, 0, 0.05)
@@ -77,6 +80,10 @@ struct ClipboardCardView: View {
                     }
                 }
         )
+        .onTapGesture(count: 2) {
+            // Double-click to paste and hide overlay
+            pasteAndHideOverlay()
+        }
         .overlay(alignment: .topTrailing) {
             if isHovering && !isDeleting {
                 quickActionButtons
@@ -333,7 +340,40 @@ struct ClipboardCardView: View {
     // MARK: - Action Methods
 
     private func copyItem() {
+        // Show subtle copy feedback animation
+        withAnimation(.easeInOut(duration: 0.15)) {
+            showCopyFeedback = true
+        }
+
+        // Reset feedback after animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                showCopyFeedback = false
+            }
+        }
+
+        // Perform the paste
         viewModel.pasteItem(item)
+    }
+
+    private func pasteAndHideOverlay() {
+        // CRITICAL: Hide overlay FIRST to restore focus to original text field
+        NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+
+        // Increased delay to 250ms to ensure:
+        // 1. Overlay hide animation completes (200ms)
+        // 2. Focus restored to previous app/text field via NSWorkspace
+        // 3. macOS processes focus change
+        // 4. THEN paste into the now-focused text field
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            NSLog("📋 Double-click paste executing after overlay hidden and focus restored")
+
+            // Add haptic feedback
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+
+            // NOW paste into restored text field
+            self.viewModel.pasteItem(self.item)
+        }
     }
 
     private func deleteItem() {
@@ -341,7 +381,7 @@ struct ClipboardCardView: View {
         withAnimation(.easeInOut(duration: 0.3)) {
             isDeleting = true
         }
-        
+
         // Perform actual delete after animation
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             viewModel.deleteItem(item)

@@ -114,6 +114,12 @@ public class ClipboardService: ClipboardServiceAPI {
 
     public func writeToClipboard(_ item: ClipboardItem) async throws {
         try await performanceMonitor.measure(operation: "write_to_clipboard") {
+            // Pause monitoring to prevent self-duplication
+            monitorService.pauseMonitoring()
+
+            // Notify monitor about internal write with item hash
+            monitorService.notifyInternalWrite(hash: item.metadata.hash)
+
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
 
@@ -164,6 +170,12 @@ public class ClipboardService: ClipboardServiceAPI {
                     )
                     try await writeToClipboard(tempItem)
                 }
+            }
+
+            // Resume monitoring after a brief delay to ensure clipboard write completes
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(100))
+                monitorService.resumeMonitoring()
             }
         }
     }

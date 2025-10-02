@@ -58,8 +58,10 @@ class ClipboardViewModel: ObservableObject {
     }
 
     private func handleNewItem(_ item: ClipboardItem) {
-        // Insert at beginning and remove duplicates
-        items.removeAll { $0.id == item.id }
+        // Insert at beginning and remove duplicates (by ID or hash)
+        items.removeAll { existingItem in
+            existingItem.id == item.id || existingItem.metadata.hash == item.metadata.hash
+        }
         items.insert(item, at: 0)
 
         // Limit to reasonable number for performance

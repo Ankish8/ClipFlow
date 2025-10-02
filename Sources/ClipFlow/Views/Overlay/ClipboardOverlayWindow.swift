@@ -24,7 +24,7 @@ class ClipboardOverlayWindow: NSWindow {
         backgroundColor = NSColor.clear
         hasShadow = true
         level = .floating
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         isMovableByWindowBackground = false
 
         // Setup frames for animation
@@ -46,8 +46,10 @@ class ClipboardOverlayWindow: NSWindow {
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self = self, self.isVisible else { return }
 
-            // If overlay is visible and user clicks anywhere globally, dismiss it
-            self.hideOverlay()
+            // CRITICAL FIX: Notify OverlayManager instead of calling hideOverlay() directly
+            // This prevents state desync between window and manager
+            NSLog("👆 Click outside detected - notifying manager to hide overlay")
+            NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         }
     }
 
@@ -121,6 +123,11 @@ class ClipboardOverlayWindow: NSWindow {
     deinit {
         // Note: In production, we should store the monitor reference and remove it
         // For now, we'll rely on weak self to prevent retain cycles
+    }
+
+    // CRITICAL: Prevent window from becoming key to avoid stealing focus from text fields
+    override var canBecomeKey: Bool {
+        return false
     }
 
     override func keyDown(with event: NSEvent) {
