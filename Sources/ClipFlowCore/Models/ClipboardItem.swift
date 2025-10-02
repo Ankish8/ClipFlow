@@ -10,7 +10,6 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
     public let source: ItemSource
     public var timestamps: ItemTimestamps
     public var security: SecurityMetadata
-    public var tags: Set<String>
     public var collectionIds: Set<UUID>
     public var isFavorite: Bool
     public var isPinned: Bool
@@ -23,7 +22,6 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
         source: ItemSource,
         timestamps: ItemTimestamps = ItemTimestamps(),
         security: SecurityMetadata = SecurityMetadata(),
-        tags: Set<String> = [],
         collectionIds: Set<UUID> = [],
         isFavorite: Bool = false,
         isPinned: Bool = false,
@@ -35,7 +33,6 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
         self.source = source
         self.timestamps = timestamps
         self.security = security
-        self.tags = tags
         self.collectionIds = collectionIds
         self.isFavorite = isFavorite
         self.isPinned = isPinned
@@ -50,44 +47,6 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
         lhs.id == rhs.id
     }
     
-    // MARK: - Tag Management
-    
-    public mutating func addTag(_ tag: String) {
-        tags.insert(tag)
-        timestamps.markModified()
-    }
-    
-    public mutating func addTags(_ newTags: Set<String>) {
-        tags.formUnion(newTags)
-        timestamps.markModified()
-    }
-    
-    public mutating func removeTag(_ tag: String) {
-        tags.remove(tag)
-        timestamps.markModified()
-    }
-    
-    public mutating func removeTags(_ tagsToRemove: Set<String>) {
-        tags.subtract(tagsToRemove)
-        timestamps.markModified()
-    }
-    
-    public mutating func setTags(_ newTags: Set<String>) {
-        tags = newTags
-        timestamps.markModified()
-    }
-    
-    public func hasTag(_ tag: String) -> Bool {
-        tags.contains(tag)
-    }
-    
-    public func hasAnyTag(_ tagsToCheck: Set<String>) -> Bool {
-        !tags.isDisjoint(with: tagsToCheck)
-    }
-    
-    public func hasAllTags(_ tagsToCheck: Set<String>) -> Bool {
-        tagsToCheck.isSubset(of: tags)
-    }
 }
 
 // MARK: - ClipboardContent Types

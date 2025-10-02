@@ -11,8 +11,6 @@ struct ClipboardCardView: View {
     @State private var hoveredButton: String? = nil
     @State private var isDeleting = false
     @State private var cachedImagePath: String? = nil
-    @State private var showTagAddition = false
-    @State private var newTagName = ""
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -167,8 +165,6 @@ struct ClipboardCardView: View {
                 Spacer()
             }
             
-            // Tag badges (always show to allow adding tags)
-            tagBadgesView
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -269,97 +265,7 @@ struct ClipboardCardView: View {
         return formatter.localizedString(for: item.timestamps.createdAt, relativeTo: Date())
     }
     
-    private var tagBadgesView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Existing tags
-            if !item.tags.isEmpty {
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 60), spacing: 6)
-                ], spacing: 6) {
-                    ForEach(Array(item.tags.sorted()), id: \.self) { tagName in
-                        InlineTagView(
-                            tagName: tagName,
-                            tagColor: viewModel.getTagColor(for: tagName),
-                            onRemove: {
-                                removeTag(tagName)
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Tag addition interface
-            if showTagAddition {
-                HStack(spacing: 6) {
-                    TextField("Tag name", text: $newTagName)
-                        .textFieldStyle(PlainTextFieldStyle())
-                        .font(.system(size: 11))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.secondary.opacity(0.1))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                                )
-                        )
-                        .onSubmit {
-                            addNewTag()
-                        }
-
-                    // Add button
-                    Button(action: addNewTag) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.green)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-
-                    // Cancel button
-                    Button(action: {
-                        showTagAddition = false
-                        newTagName = ""
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.red)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            } else {
-                // Add new tag button
-                Button(action: {
-                    showTagAddition.toggle()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .medium))
-                        Text("Add Tag")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.secondary.opacity(0.1))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-    }
     
-    private func handleTagTap(_ tagName: String) {
-        // Notify view model to filter by this tag
-        // This will be implemented when we add tag filtering
-        print("Tag tapped: \(tagName)")
-    }
 
     private func formatFileSize(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
@@ -446,24 +352,6 @@ struct ClipboardCardView: View {
         viewModel.toggleFavorite(for: item)
     }
 
-    private func removeTag(_ tagName: String) {
-        var currentTags = item.tags
-        currentTags.remove(tagName)
-        viewModel.updateItemTags(item, with: currentTags)
-    }
-
-    private func addNewTag() {
-        let trimmedTag = newTagName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTag.isEmpty else { return }
-
-        var currentTags = item.tags
-        currentTags.insert(trimmedTag)
-        viewModel.updateItemTags(item, with: currentTags)
-
-        // Reset the input state
-        showTagAddition = false
-        newTagName = ""
-    }
 
     // MARK: - Drag and Drop Support
 
@@ -669,58 +557,3 @@ struct ContentTypeInfo {
     }
 }
 
-// MARK: - Inline Tag View
-
-struct InlineTagView: View {
-    let tagName: String
-    let tagColor: String?
-    let onRemove: () -> Void
-
-    @State private var isHovering = false
-    @Environment(\.colorScheme) var colorScheme
-
-    private var color: Color {
-        if let tagColor = tagColor {
-            return Color(hex: tagColor)
-        }
-        return .blue
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            // Color indicator
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-
-            Text(tagName)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.primary)
-
-            // Remove button (visible on hover)
-            if isHovering {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(color.opacity(colorScheme == .light ? 0.15 : 0.25))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(color.opacity(0.3), lineWidth: 1)
-                )
-        )
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
-    }
-}

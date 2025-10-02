@@ -11,7 +11,6 @@ class ClipboardViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var statistics: ClipboardStatistics?
-    @Published var tags: [Tag] = []
 
     private var cancellables = Set<AnyCancellable>()
     private let clipboardService = ClipboardService.shared
@@ -24,7 +23,6 @@ class ClipboardViewModel: ObservableObject {
         print("🚀 ViewModel initializing...")
         setupSubscriptions()
         loadInitialData()
-        loadTags()
 
         // Add simple clipboard monitoring as backup
         startSimpleClipboardMonitoring()
@@ -153,47 +151,6 @@ class ClipboardViewModel: ObservableObject {
         }
     }
 
-    func addTags(to item: ClipboardItem, tags: Set<String>) {
-        Task {
-            do {
-                try await clipboardService.addTags(tags, to: item.id)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-    
-
-    func updateItemTags(_ item: ClipboardItem, with newTags: Set<String>) {
-        Task {
-            do {
-                try await clipboardService.setTags(newTags, for: item.id)
-
-                // Update local items array
-                if let index = items.firstIndex(where: { $0.id == item.id }) {
-                    var updatedItem = items[index]
-                    updatedItem.tags = newTags
-                    items[index] = updatedItem
-                }
-            } catch {
-                errorMessage = "Failed to update tags: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    func loadTags() {
-        Task {
-            do {
-                tags = try await clipboardService.getAllTags()
-            } catch {
-                print("Failed to load tags: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func getTagColor(for tagName: String) -> String? {
-        return tags.first { $0.name == tagName }?.color
-    }
 
     // MARK: - Search and Filtering
 
@@ -204,15 +161,10 @@ class ClipboardViewModel: ObservableObject {
             // Search in content
             let contentMatch = item.content.displayText.localizedCaseInsensitiveContains(searchText)
 
-            // Search in tags
-            let tagMatch = item.tags.contains { tag in
-                tag.localizedCaseInsensitiveContains(searchText)
-            }
-
             // Search in source application
             let appMatch = item.source.applicationName?.localizedCaseInsensitiveContains(searchText) ?? false
 
-            return contentMatch || tagMatch || appMatch
+            return contentMatch || appMatch
         }
     }
 

@@ -14,7 +14,6 @@ public class ClipboardService: ClipboardServiceAPI {
     private let monitorService: ClipboardMonitorService
     private let storageService: StorageService
     private let performanceMonitor: PerformanceMonitor
-    private let tagService: TagService
 
     // Publishers
     private let _itemUpdates = PassthroughSubject<ClipboardItem, Never>()
@@ -28,7 +27,6 @@ public class ClipboardService: ClipboardServiceAPI {
     private init() {
         self.storageService = StorageService()
         self.performanceMonitor = PerformanceMonitor.shared
-        self.tagService = TagService(storageService: storageService)
         self.monitorService = ClipboardMonitorService(
             storageService: storageService,
             performanceMonitor: performanceMonitor
@@ -296,80 +294,6 @@ public class ClipboardService: ClipboardServiceAPI {
         }
     }
 
-    public func addTags(_ tags: Set<String>, to itemId: UUID) async throws {
-        try await performanceMonitor.measure(operation: "add_tags") {
-            guard var item = try await storageService.getItem(id: itemId) else {
-                throw ClipboardError.invalidInput("Item not found")
-            }
-
-            item.tags.formUnion(tags)
-            try await storageService.updateItem(item)
-            _itemUpdates.send(item)
-        }
-    }
-
-    public func removeTags(_ tags: Set<String>, from itemId: UUID) async throws {
-        try await performanceMonitor.measure(operation: "remove_tags") {
-            guard var item = try await storageService.getItem(id: itemId) else {
-                throw ClipboardError.invalidInput("Item not found")
-            }
-
-            item.tags.subtract(tags)
-            try await storageService.updateItem(item)
-            _itemUpdates.send(item)
-        }
-    }
-
-    public func setTags(_ tags: Set<String>, for itemId: UUID) async throws {
-        try await performanceMonitor.measure(operation: "set_tags") {
-            guard var item = try await storageService.getItem(id: itemId) else {
-                throw ClipboardError.invalidInput("Item not found")
-            }
-
-            item.tags = tags
-            try await storageService.updateItem(item)
-            _itemUpdates.send(item)
-        }
-    }
-
-    public func getTags(for itemId: UUID) async throws -> Set<String> {
-        try await performanceMonitor.measure(operation: "get_tags") {
-            guard let item = try await storageService.getItem(id: itemId) else {
-                throw ClipboardError.invalidInput("Item not found")
-            }
-            return item.tags
-        }
-    }
-
-    public func getAllTags() async throws -> [Tag] {
-        try await performanceMonitor.measure(operation: "get_all_tags") {
-            return try await tagService.getAllTags()
-        }
-    }
-
-    public func createTag(name: String, color: String, icon: String?, description: String?) async throws -> Tag {
-        try await performanceMonitor.measure(operation: "create_tag") {
-            return try await tagService.createTag(name: name, color: color, icon: icon, description: description)
-        }
-    }
-
-    public func updateTag(id: UUID, name: String?, color: String?, icon: String?, description: String?) async throws -> Tag {
-        try await performanceMonitor.measure(operation: "update_tag") {
-            return try await tagService.updateTag(id: id, name: name, color: color, icon: icon, description: description)
-        }
-    }
-
-    public func deleteTag(id: UUID) async throws {
-        try await performanceMonitor.measure(operation: "delete_tag") {
-            try await tagService.deleteTag(id: id)
-        }
-    }
-
-    public func searchTags(query: String) async throws -> [Tag] {
-        try await performanceMonitor.measure(operation: "search_tags") {
-            return try await tagService.searchTags(query: query)
-        }
-    }
 
     public func toggleFavorite(itemId: UUID) async throws {
         try await performanceMonitor.measure(operation: "toggle_favorite") {
@@ -460,7 +384,6 @@ public class ClipboardService: ClipboardServiceAPI {
             source: item.source,
             timestamps: ItemTimestamps(),
             security: item.security,
-            tags: item.tags,
             collectionIds: item.collectionIds,
             isFavorite: item.isFavorite,
             isPinned: item.isPinned,

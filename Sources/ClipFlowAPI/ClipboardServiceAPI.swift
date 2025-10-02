@@ -62,35 +62,6 @@ public protocol ClipboardServiceAPI {
     /// Pin/unpin items
     func togglePin(itemId: UUID) async throws
 
-    /// Add tags to item
-    func addTags(_ tags: Set<String>,
-                 to itemId: UUID) async throws
-    
-    /// Remove tags from item
-    func removeTags(_ tags: Set<String>,
-                    from itemId: UUID) async throws
-    
-    /// Set tags for item (replaces all existing tags)
-    func setTags(_ tags: Set<String>,
-                 for itemId: UUID) async throws
-    
-    /// Get all tags for a specific item
-    func getTags(for itemId: UUID) async throws -> Set<String>
-    
-    /// Get all available tags
-    func getAllTags() async throws -> [Tag]
-    
-    /// Create a new tag
-    func createTag(name: String, color: String, icon: String?, description: String?) async throws -> Tag
-    
-    /// Update tag metadata
-    func updateTag(id: UUID, name: String?, color: String?, icon: String?, description: String?) async throws -> Tag
-    
-    /// Delete a tag
-    func deleteTag(id: UUID) async throws
-    
-    /// Search tags by name
-    func searchTags(query: String) async throws -> [Tag]
 
     /// Mark as favorite
     func toggleFavorite(itemId: UUID) async throws
@@ -116,7 +87,6 @@ public struct HistoryFilter: Sendable {
     public let contentTypes: [String]?
     public let applications: [String]?
     public let dateRange: ClosedRange<Date>?
-    public let tags: [String]?
     public let isFavorite: Bool?
     public let isPinned: Bool?
     public let isDeleted: Bool?
@@ -125,7 +95,6 @@ public struct HistoryFilter: Sendable {
         contentTypes: [String]? = nil,
         applications: [String]? = nil,
         dateRange: ClosedRange<Date>? = nil,
-        tags: [String]? = nil,
         isFavorite: Bool? = nil,
         isPinned: Bool? = nil,
         isDeleted: Bool? = false
@@ -133,7 +102,6 @@ public struct HistoryFilter: Sendable {
         self.contentTypes = contentTypes
         self.applications = applications
         self.dateRange = dateRange
-        self.tags = tags
         self.isFavorite = isFavorite
         self.isPinned = isPinned
         self.isDeleted = isDeleted
@@ -144,7 +112,6 @@ public enum SearchScope: Sendable {
     case all
     case content
     case metadata
-    case tags
     case applications
     case collections([UUID])
 }

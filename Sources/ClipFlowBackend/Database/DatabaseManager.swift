@@ -54,7 +54,6 @@ public class DatabaseManager {
                 t.column("source", .text).notNull() // JSON
                 t.column("timestamps", .text).notNull() // JSON
                 t.column("security", .text).notNull() // JSON
-                t.column("tags", .text) // JSON array
                 t.column("collection_ids", .text) // JSON array
                 t.column("is_favorite", .boolean).defaults(to: false)
                 t.column("is_pinned", .boolean).defaults(to: false)
@@ -119,7 +118,6 @@ public class DatabaseManager {
             // Full-text search table
             try db.create(virtualTable: "items_fts", using: FTS5()) { t in
                 t.column("content_text")
-                t.column("tags")
                 t.column("application_name")
                 t.tokenizer = .porter()
             }
@@ -183,19 +181,17 @@ public class DatabaseManager {
 
     public func updateItem(_ item: ClipboardItem) async throws {
         try await write { db in
-            var record = ClipboardItemRecord(from: item)
+            let record = ClipboardItemRecord(from: item)
             try record.update(db)
 
             // Update FTS index
             try db.execute(sql: """
                 UPDATE items_fts SET
                     content_text = ?,
-                    tags = ?,
                     application_name = ?
                 WHERE rowid = (SELECT rowid FROM clipboard_items WHERE id = ?)
             """, arguments: [
                 item.content.displayText,
-                Array(item.tags).joined(separator: " "),
                 item.source.applicationName ?? "",
                 item.id.uuidString
             ])
@@ -352,7 +348,6 @@ public class DatabaseManager {
 public struct ItemFilter {
     let contentTypes: [String]?
     let applications: [String]?
-    let tags: [String]?
     let dateRange: ClosedRange<Date>?
     let isFavorite: Bool?
     let isPinned: Bool?
@@ -365,7 +360,6 @@ public struct ItemFilter {
     public init(
         contentTypes: [String]? = nil,
         applications: [String]? = nil,
-        tags: [String]? = nil,
         dateRange: ClosedRange<Date>? = nil,
         isFavorite: Bool? = nil,
         isPinned: Bool? = nil,
@@ -373,7 +367,6 @@ public struct ItemFilter {
     ) {
         self.contentTypes = contentTypes
         self.applications = applications
-        self.tags = tags
         self.dateRange = dateRange
         self.isFavorite = isFavorite
         self.isPinned = isPinned

@@ -350,7 +350,6 @@ public class StorageService {
                     source: item.source,
                     timestamps: item.timestamps,
                     security: item.security,
-                    tags: item.tags,
                     collectionIds: item.collectionIds,
                     isFavorite: item.isFavorite,
                     isPinned: item.isPinned,

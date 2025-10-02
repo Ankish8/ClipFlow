@@ -14,7 +14,6 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
     var source: String
     var timestamps: String
     var security: String
-    var tags: String?
     var collectionIds: String?
     var isFavorite: Bool
     var isPinned: Bool
@@ -36,7 +35,6 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
         self.source = (try? JSONEncoder().encode(item.source).base64EncodedString()) ?? ""
         self.timestamps = (try? JSONEncoder().encode(item.timestamps).base64EncodedString()) ?? ""
         self.security = (try? JSONEncoder().encode(item.security).base64EncodedString()) ?? ""
-        self.tags = item.tags.isEmpty ? nil : (try? JSONEncoder().encode(Array(item.tags)).base64EncodedString())
         self.collectionIds = item.collectionIds.isEmpty ? nil : (try? JSONEncoder().encode(Array(item.collectionIds)).base64EncodedString())
         self.isFavorite = item.isFavorite
         self.isPinned = item.isPinned
@@ -76,14 +74,6 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
             throw DatabaseError.corruptedData("Failed to decode security")
         }
 
-        let itemTags: Set<String>
-        if let tagsString = tags,
-           let tagsData = Data(base64Encoded: tagsString),
-           let decodedTags = try? decoder.decode([String].self, from: tagsData) {
-            itemTags = Set(decodedTags)
-        } else {
-            itemTags = []
-        }
 
         let itemCollectionIds: Set<UUID>
         if let collectionIdsString = collectionIds,
@@ -105,7 +95,6 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
             source: itemSource,
             timestamps: itemTimestamps,
             security: itemSecurity,
-            tags: itemTags,
             collectionIds: itemCollectionIds,
             isFavorite: isFavorite,
             isPinned: isPinned,

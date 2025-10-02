@@ -70,11 +70,6 @@ struct ClipboardItemRow: View {
                         .foregroundColor(.secondary)
                 }
 
-                // Tags if present
-                if !item.tags.isEmpty {
-                    TagsView(tags: Array(item.tags))
-                        .padding(.top, 2)
-                }
             }
 
             Spacer()
@@ -145,25 +140,6 @@ struct ContentTypeIcon: View {
     }
 }
 
-struct TagsView: View {
-    let tags: [String]
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(tags, id: \.self) { tag in
-                    Text(tag)
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.tertiary, in: Capsule())
-                        .foregroundColor(.primary)
-                }
-            }
-            .padding(.horizontal, 1)
-        }
-    }
-}
 
 struct ContextMenuContent: View {
     let item: ClipboardItem

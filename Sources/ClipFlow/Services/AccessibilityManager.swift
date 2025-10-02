@@ -32,6 +32,7 @@ final class AccessibilityManager: ObservableObject {
 
     // MARK: - Permission Checking
 
+    @discardableResult
     func checkAllPermissions() async -> Bool {
         let accessibilityGranted = await checkAccessibilityPermission()
         let inputMonitoringGranted = await checkInputMonitoringPermission()
