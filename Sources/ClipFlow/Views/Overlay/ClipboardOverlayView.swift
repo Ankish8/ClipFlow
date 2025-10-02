@@ -100,7 +100,7 @@ struct ClipboardOverlayView: View {
                         .padding(.horizontal, 10)
 
                     Spacer()
-                        .frame(minHeight: 20)
+                        .frame(minHeight: 30)
                 }
                 .frame(width: 90)
 
