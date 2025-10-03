@@ -267,9 +267,25 @@ public class ClipboardMonitorService {
         let chromeURLType = NSPasteboard.PasteboardType("org.chromium.source-url")
         let hasChromeURL = types.contains(chromeURLType)
 
-        // FIXED priority order: Check native URLs first (including Chrome URLs), then intelligent file/image detection, then text with URL detection
-        NSLog("🔍 Checking .URL: \(types.contains(.URL)), Chrome URL: \(hasChromeURL)")
-        if types.contains(.URL) || hasChromeURL {
+        // Smart Chrome detection: Only treat as URL if user actually copied the URL itself
+        // Chrome always adds org.chromium.source-url (page URL) even when copying text
+        // We need to check if the string content matches the URL to determine intent
+        var shouldProcessAsURL = types.contains(.URL)
+        if hasChromeURL && !shouldProcessAsURL {
+            // Check if string content matches the Chrome URL (user copied URL from address bar)
+            if let stringContent = pasteboard.string(forType: .string),
+               let chromeURL = pasteboard.string(forType: chromeURLType) {
+                let cleanedString = stringContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                let cleanedChromeURL = chromeURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Only process as URL if the text content IS the URL (user copied URL itself)
+                shouldProcessAsURL = cleanedString == cleanedChromeURL
+                NSLog("🔍 Chrome URL check: string '\(cleanedString.prefix(50))' vs URL '\(cleanedChromeURL.prefix(50))' -> match: \(shouldProcessAsURL)")
+            }
+        }
+
+        // FIXED priority order: Check native URLs first (including Chrome URLs when appropriate), then intelligent file/image detection, then text with URL detection
+        NSLog("🔍 Checking .URL: \(types.contains(.URL)), Chrome URL: \(hasChromeURL), shouldProcessAsURL: \(shouldProcessAsURL)")
+        if shouldProcessAsURL {
             print("🔗 Processing as native URL content")
             content = await processURLContent(pasteboard, chromeType: hasChromeURL ? chromeURLType : nil)
         } else if types.contains(.fileURL) {
@@ -364,6 +380,18 @@ public class ClipboardMonitorService {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         print("📄 Text content: \"\(trimmedText.prefix(50))\"")
 
+        // PRIORITY 1: Check if it's a hex color code BEFORE URL detection
+        // This prevents hex codes like #000000 from being detected as URLs
+        if trimmedText.isValidColor {
+            NSLog("🎨 Detected hex color: \(trimmedText)")
+            if let color = NSColor(hexString: trimmedText) {
+                print("🎨 Successfully created NSColor from hex string")
+                return .color(ColorContent(nsColor: color))
+            } else {
+                NSLog("❌ Failed to create NSColor from valid hex string: \(trimmedText)")
+            }
+        }
+
         // Explicit test of URL validation
         let urlTest = trimmedText.isValidURL
         print("🔍 URL validation result for '\(trimmedText)': \(urlTest)")
@@ -374,7 +402,7 @@ public class ClipboardMonitorService {
         let canCreateURL = URL(string: trimmedText) != nil
         print("📊 URL Debug - hasHttps: \(hasHttps), hasHttp: \(hasHttp), canCreateURL: \(canCreateURL)")
 
-        // Check if it's a URL first - prioritize URL detection
+        // PRIORITY 2: Check if it's a URL - prioritize URL detection
         NSLog("🔍 About to check URL conversion: isValidURL=\(trimmedText.isValidURL)")
         if trimmedText.isValidURL {
             // Clean the text by removing newlines (for multi-line URLs from browsers)

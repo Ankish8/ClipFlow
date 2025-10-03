@@ -38,7 +38,6 @@ struct ClipboardCardView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
         )
-        .scaleEffect(isSelected ? 1.02 : 1.0)
         .scaleEffect(isDeleting ? 0.8 : 1.0)
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .offset(y: isHovering ? -1 : 0) // transform: translateY(-1px)

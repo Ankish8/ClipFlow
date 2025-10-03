@@ -26,35 +26,43 @@ struct TextPreviewCard: View {
         return Color(.sRGB, red: red, green: green, blue: blue, opacity: 1.0)
     }
 
+    // Calculate luminance for detected color
+    private var colorLuminance: Double {
+        guard detectedColor != nil else { return 0.5 }
+        // Extract RGB from SwiftUI Color (approximation)
+        let text = content.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let rgb = parseRGBFromHex(text) {
+            let r = Double(rgb.0) / 255.0
+            let g = Double(rgb.1) / 255.0
+            let b = Double(rgb.2) / 255.0
+            return 0.299 * r + 0.587 * g + 0.114 * b
+        }
+        return 0.5
+    }
+
+    // Determine contrasting text color
+    private var contrastingTextColor: Color {
+        return colorLuminance > 0.5 ? Color.black : Color.white
+    }
+
     var body: some View {
         if let color = detectedColor {
-            // Display as color preview
-            VStack(spacing: 12) {
-                // Color swatch
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(color)
-                    .frame(height: 100)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.primary.opacity(0.2), lineWidth: 1)
-                    )
-
-                Spacer()
-
-                // Color information
-                VStack(alignment: .leading, spacing: 6) {
+            // Display as color preview with overlaid hex code (no RGB)
+            RoundedRectangle(cornerRadius: 12)
+                .fill(color)
+                .overlay(
+                    // Hex code centered on color with intelligent contrast
                     Text(content.plainText.uppercased())
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.primary)
-
-                    if let rgbComponents = parseRGBFromHex(content.plainText) {
-                        Text("RGB(\(rgbComponents.0), \(rgbComponents.1), \(rgbComponents.2))")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(contrastingTextColor)
+                )
+                .overlay(
+                    // Border for better definition
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+                )
+                .padding(.bottom, 16) // Bottom padding only
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             // Display as regular text
             VStack(alignment: .leading, spacing: 8) {
@@ -330,39 +338,36 @@ struct LinkPreviewCard: View {
 struct ColorPreviewCard: View {
     let content: ColorContent
 
+    // Calculate luminance to determine if color is dark or light
+    private var luminance: Double {
+        // Using relative luminance formula: 0.299*R + 0.587*G + 0.114*B
+        return 0.299 * content.red + 0.587 * content.green + 0.114 * content.blue
+    }
+
+    // Determine contrasting text color based on background luminance
+    private var contrastingTextColor: Color {
+        // If luminance > 0.5, background is light, use dark text
+        // If luminance <= 0.5, background is dark, use light text
+        return luminance > 0.5 ? Color.black : Color.white
+    }
+
     var body: some View {
-        VStack(spacing: 12) {
-            // Color swatch - much larger
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(red: content.red, green: content.green, blue: content.blue, opacity: content.alpha))
-                .frame(height: 120)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                )
-
-            Spacer()
-
-            // Color values - larger and more detailed
-            VStack(alignment: .leading, spacing: 6) {
-                Text(content.hexValue)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("RGB(\(Int(content.red * 255)), \(Int(content.green * 255)), \(Int(content.blue * 255)))")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-
-                    if content.alpha < 1.0 {
-                        Text("Alpha: \(String(format: "%.2f", content.alpha))")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Large color swatch with overlaid hex code - no separate text section
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color(red: content.red, green: content.green, blue: content.blue, opacity: content.alpha))
+            .overlay(
+                // Hex code centered on color with intelligent contrast
+                Text(content.hexValue.uppercased())
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(contrastingTextColor)
+            )
+            .overlay(
+                // Border for better definition
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+            )
+            .padding(.bottom, 16) // Bottom padding only
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
