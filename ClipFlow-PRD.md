@@ -378,14 +378,22 @@ ClipFlow is a macOS clipboard manager that provides seamless clipboard history t
 
 ## 7. Development Roadmap
 
-### 7.1 Phase 1: Fix Database Persistence (Current Priority)
+### 7.1 Phase 1: Fix Database Persistence ✅ COMPLETED
 - **Goal**: Reactivate database storage
-- **Tasks**:
-  - Fix database hanging issues in StorageService
-  - Remove temporary database bypass
-  - Test database operations with real data
-  - Implement proper error handling and recovery
-- **Success Criteria**: Clipboard history persists across app restarts
+- **Status**: ✅ COMPLETED
+- **Completed Tasks**:
+  - ✅ Fixed database hanging issues in StorageService
+  - ✅ Removed temporary database bypass
+  - ✅ Fixed database record decoding with custom row decoding
+  - ✅ Implemented proper error handling and recovery
+  - ✅ Tested database operations with real data
+  - ✅ Verified clipboard history persists across app restarts
+- **Technical Details**:
+  - Fixed GRDB column mapping from snake_case to camelCase
+  - Implemented custom `init(row:)` and `encode(to:)` methods
+  - Removed fallback cache logic that was masking database issues
+  - Database operations now work correctly with proper async/await patterns
+- **Success Criteria**: ✅ Clipboard history persists across app restarts - VERIFIED
 
 ### 7.2 Phase 2: Complete User Actions ✅ COMPLETED
 - **Goal**: Implement full clipboard item management

@@ -111,14 +111,7 @@ public class StorageService {
     ) async throws -> [ClipboardItem] {
         return try await performanceMonitor.measure(operation: "get_items") {
             let items = try await databaseManager.getItems(limit: limit, offset: offset, filter: filter)
-
-            // FALLBACK: If database is bypassed and returns empty, use cache
-            if items.isEmpty && offset == 0 {
-                NSLog("🔄 Database returned empty, falling back to cache for menu bar sync")
-                let cachedItems = await cacheManager.getRecentItems(limit: limit)
-                NSLog("📋 Cache fallback returned \(cachedItems.count) items")
-                return cachedItems
-            }
+            NSLog("📋 Retrieved \(items.count) items from database")
 
             // Load large content for items that need it
             var loadedItems: [ClipboardItem] = []

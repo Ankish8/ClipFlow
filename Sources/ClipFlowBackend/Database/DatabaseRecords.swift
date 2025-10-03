@@ -25,6 +25,48 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
     var hash: String
 
     static let databaseTableName = "clipboard_items"
+    
+    // Custom row decoding to handle snake_case to camelCase conversion
+    init(row: Row) throws {
+        id = try row["id"]
+        contentType = try row["content_type"]
+        contentData = row["content_data"]
+        contentText = row["content_text"]
+        metadata = try row["metadata"]
+        source = try row["source"]
+        timestamps = try row["timestamps"]
+        security = try row["security"]
+        collectionIds = row["collection_ids"]
+        isFavorite = try row["is_favorite"]
+        isPinned = try row["is_pinned"]
+        isDeleted = try row["is_deleted"]
+        createdAt = try row["created_at"]
+        modifiedAt = row["modified_at"]
+        accessedAt = row["accessed_at"]
+        expiresAt = row["expires_at"]
+        hash = try row["hash"]
+    }
+    
+    // Custom persistence for snake_case column names
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = id
+        container["content_type"] = contentType
+        container["content_data"] = contentData
+        container["content_text"] = contentText
+        container["metadata"] = metadata
+        container["source"] = source
+        container["timestamps"] = timestamps
+        container["security"] = security
+        container["collection_ids"] = collectionIds
+        container["is_favorite"] = isFavorite
+        container["is_pinned"] = isPinned
+        container["is_deleted"] = isDeleted
+        container["created_at"] = createdAt
+        container["modified_at"] = modifiedAt
+        container["accessed_at"] = accessedAt
+        container["expires_at"] = expiresAt
+        container["hash"] = hash
+    }
 
     init(from item: ClipboardItem) {
         self.id = item.id.uuidString

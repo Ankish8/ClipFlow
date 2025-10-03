@@ -167,16 +167,62 @@ public class DatabaseManager {
     // MARK: - Clipboard Items
 
     public func saveItem(_ item: ClipboardItem) async throws {
-        NSLog("🗄️ DatabaseManager.saveItem started - TEMPORARILY SIMPLIFIED")
+        NSLog("🗄️ DatabaseManager.saveItem started")
 
-        // TEMPORARY FIX: Skip database operations to unblock the pipeline
-        NSLog("⚠️ TEMPORARY: Skipping actual database save to fix hanging issue")
-        NSLog("💾 Would save item: \(item.id) with content type: \(item.content.contentType)")
+        try await write { db in
+            let record = ClipboardItemRecord(from: item)
+            
+            // Use INSERT OR REPLACE to handle duplicates gracefully
+            try db.execute(sql: """
+                INSERT OR REPLACE INTO clipboard_items (
+                    id, content_type, content_data, content_text, metadata, source,
+                    timestamps, security, collection_ids, is_favorite, is_pinned,
+                    is_deleted, created_at, modified_at, accessed_at, expires_at, hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, arguments: [
+                record.id,
+                record.contentType,
+                record.contentData,
+                record.contentText,
+                record.metadata,
+                record.source,
+                record.timestamps,
+                record.security,
+                record.collectionIds,
+                record.isFavorite,
+                record.isPinned,
+                record.isDeleted,
+                record.createdAt,
+                record.modifiedAt as DatabaseValueConvertible?,
+                record.accessedAt as DatabaseValueConvertible?,
+                record.expiresAt as DatabaseValueConvertible?,
+                record.hash
+            ])
 
-        // Simulate successful save
-        try? await Task.sleep(for: .milliseconds(10))
-
-        NSLog("✅ DatabaseManager.saveItem completed (simulated)")
+            // Update FTS index for search functionality (only if content_text exists)
+            if let contentText = record.contentText, !contentText.isEmpty {
+                do {
+                    try db.execute(sql: """
+                        INSERT OR REPLACE INTO items_fts (rowid, content_text, application_name)
+                        VALUES (
+                            (SELECT rowid FROM clipboard_items WHERE id = ?),
+                            ?,
+                            ?
+                        )
+                    """, arguments: [
+                        record.id,
+                        contentText,
+                        item.source.applicationName ?? ""
+                    ])
+                } catch {
+                    NSLog("⚠️ Failed to update FTS index: \(error)")
+                }
+            }
+            
+            NSLog("✅ Successfully saved item \(item.id) to database")
+        }
+        
+        NSLog("✅ DatabaseManager.saveItem completed successfully")
     }
 
     public func updateItem(_ item: ClipboardItem) async throws {
@@ -212,7 +258,7 @@ public class DatabaseManager {
         offset: Int = 0,
         filter: ItemFilter? = nil
     ) async throws -> [ClipboardItem] {
-        try await read { db in
+        return try await read { db in
             var sql = "SELECT * FROM clipboard_items WHERE is_deleted = 0"
             var arguments: [DatabaseValueConvertible] = []
 
@@ -229,23 +275,53 @@ public class DatabaseManager {
             arguments.append(limit)
             arguments.append(offset)
 
-            let records = try ClipboardItemRecord.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
-            return try records.map { try $0.toClipboardItem() }
+            NSLog("🔍 Executing query: \(sql) with arguments: \(arguments)")
+            
+            do {
+                let records = try ClipboardItemRecord.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
+                var items: [ClipboardItem] = []
+                
+                for record in records {
+                    do {
+                        let item = try record.toClipboardItem()
+                        items.append(item)
+                    } catch {
+                        NSLog("⚠️ Failed to decode record \(record.id): \(error)")
+                        // Skip this record but continue with others
+                    }
+                }
+                
+                NSLog("📋 Retrieved \(items.count) valid items from database (out of \(records.count) records)")
+                return items
+            } catch {
+                NSLog("❌ Failed to fetch items from database: \(error)")
+                return [] // Return empty array on error
+            }
         }
     }
 
     public func searchItems(query: String, limit: Int = 50) async throws -> [ClipboardItem] {
-        try await read { db in
+        return try await read { db in
+            // Use a simpler search that joins with FTS if available, falls back to LIKE
             let sql = """
                 SELECT ci.* FROM clipboard_items ci
-                JOIN items_fts fts ON fts.rowid = ci.rowid
-                WHERE items_fts MATCH ? AND ci.is_deleted = 0
-                ORDER BY bm25(items_fts)
+                WHERE ci.is_deleted = 0 AND (
+                    ci.content_text LIKE ? OR
+                    ci.id IN (
+                        SELECT rowid FROM items_fts 
+                        WHERE items_fts MATCH ?
+                    )
+                )
+                ORDER BY ci.created_at DESC
                 LIMIT ?
             """
-
-            let records = try ClipboardItemRecord.fetchAll(db, sql: sql, arguments: [query, limit])
-            return try records.map { try $0.toClipboardItem() }
+            
+            let searchTerm = "%\(query)%"
+            let records = try ClipboardItemRecord.fetchAll(db, sql: sql, arguments: [searchTerm, query, limit])
+            let items = try records.map { try $0.toClipboardItem() }
+            
+            NSLog("🔍 Search for '\(query)' returned \(items.count) items")
+            return items
         }
     }
 
