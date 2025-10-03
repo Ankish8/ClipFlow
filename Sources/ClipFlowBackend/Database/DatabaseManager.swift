@@ -151,6 +151,39 @@ public class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v1.2") { db in
+            // Add tags table
+            try db.create(table: "tags") { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull().unique()
+                t.column("color", .text).notNull()
+                t.column("icon", .text).notNull()
+                t.column("description", .text)
+                t.column("usage_count", .integer).defaults(to: 0)
+                t.column("created_at", .integer).notNull()
+                t.column("modified_at", .integer).notNull()
+            }
+
+            // Add tag assignments table
+            try db.create(table: "tag_assignments") { t in
+                t.primaryKey("id", .text)
+                t.column("tag_id", .text).notNull()
+                    .references("tags", onDelete: .cascade)
+                t.column("item_id", .text).notNull()
+                    .references("clipboard_items", onDelete: .cascade)
+                t.column("assigned_at", .integer).notNull()
+                t.column("assigned_by", .text)
+                t.uniqueKey(["tag_id", "item_id"])
+            }
+
+            // Add indexes for tag queries
+            try db.create(index: "idx_tags_name", on: "tags", columns: ["name"])
+            try db.create(index: "idx_tags_usage", on: "tags", columns: ["usage_count"])
+            try db.create(index: "idx_tag_assignments_tag", on: "tag_assignments", columns: ["tag_id"])
+            try db.create(index: "idx_tag_assignments_item", on: "tag_assignments", columns: ["item_id"])
+            try db.create(index: "idx_tag_assignments_assigned_at", on: "tag_assignments", columns: ["assigned_at"])
+        }
+
         return migrator
     }
 

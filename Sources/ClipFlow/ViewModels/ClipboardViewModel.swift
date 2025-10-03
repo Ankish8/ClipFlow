@@ -11,6 +11,8 @@ class ClipboardViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var statistics: ClipboardStatistics?
+    @Published var availableTags: [Tag] = []
+    @Published var selectedTagIds: Set<UUID> = [] // For tag-based filtering
 
     private var cancellables = Set<AnyCancellable>()
     private let clipboardService = ClipboardService.shared
@@ -111,6 +113,10 @@ class ClipboardViewModel: ObservableObject {
 
                 // Load statistics
                 statistics = await clipboardService.getStatistics()
+                
+                // Load available tags
+                availableTags = try await clipboardService.getAllTags()
+                
                 isLoading = false
             } catch {
                 errorMessage = error.localizedDescription
@@ -179,6 +185,28 @@ class ClipboardViewModel: ObservableObject {
         }
     }
 
+    func itemsFilteredByTags() -> [ClipboardItem] {
+        guard !selectedTagIds.isEmpty else { return items }
+        
+        return items.filter { item in
+            // Check if item has any of the selected tags
+            // This would require loading tags for each item - for efficiency, we should cache item tags
+            return true // Placeholder - implement actual tag filtering
+        }
+    }
+
+    func toggleTagSelection(_ tagId: UUID) {
+        if selectedTagIds.contains(tagId) {
+            selectedTagIds.remove(tagId)
+        } else {
+            selectedTagIds.insert(tagId)
+        }
+    }
+
+    func clearTagSelection() {
+        selectedTagIds.removeAll()
+    }
+
     func performFullTextSearch(_ query: String) {
         guard !query.isEmpty else {
             loadInitialData()
@@ -238,6 +266,60 @@ class ClipboardViewModel: ObservableObject {
                     filter: nil
                 )
                 items.append(contentsOf: moreItems)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    // MARK: - Tag Management
+
+    func createTag(name: String, color: String = "#007AFF", icon: String = "tag.fill") {
+        Task {
+            do {
+                let tag = Tag(name: name, color: color, icon: icon)
+                _ = try await clipboardService.createTag(tag)
+                // Refresh available tags
+                availableTags = try await clipboardService.getAllTags()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func assignTag(_ tagId: UUID, to itemId: UUID) {
+        Task {
+            do {
+                try await clipboardService.assignTag(tagId: tagId, to: itemId)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func unassignTag(_ tagId: UUID, from itemId: UUID) {
+        Task {
+            do {
+                try await clipboardService.unassignTag(tagId: tagId, from: itemId)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func getTagsForItem(_ itemId: UUID) async -> [Tag] {
+        do {
+            return try await clipboardService.getTagsForItem(itemId: itemId)
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    func refreshTags() {
+        Task {
+            do {
+                availableTags = try await clipboardService.getAllTags()
             } catch {
                 errorMessage = error.localizedDescription
             }

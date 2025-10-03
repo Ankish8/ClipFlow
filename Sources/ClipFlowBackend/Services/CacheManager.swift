@@ -12,6 +12,7 @@ public actor CacheManager {
     private var memoryCache: [UUID: CachedItem] = [:]
     private var hashCache: [String: UUID] = [:] // Hash to UUID mapping for fast lookups
     private var collectionCache: [UUID: Collection] = [:]
+    private var tagCache: [UUID: Tag] = [:] // Tag cache
     private var accessOrder: LinkedList<UUID> = LinkedList() // Optimized LRU
 
     // Disk cache
@@ -148,6 +149,24 @@ public actor CacheManager {
         collectionCache.removeValue(forKey: id)
     }
 
+    // MARK: - Tag Caching
+
+    public func cacheTag(_ tag: Tag) async {
+        tagCache[tag.id] = tag
+    }
+
+    public func getTag(id: UUID) async -> Tag? {
+        return tagCache[id]
+    }
+
+    public func removeTag(id: UUID) async {
+        tagCache.removeValue(forKey: id)
+    }
+
+    public func getAllTags() async -> [Tag] {
+        return Array(tagCache.values).sorted { $0.name < $1.name }
+    }
+
     // MARK: - Cache Queries
 
     /// Get recent items from cache sorted by access order (most recent first)
@@ -253,7 +272,8 @@ public actor CacheManager {
             totalMisses: misses,
             totalEvictions: evictions,
             diskEvictions: diskEvictions,
-            averageItemSize: memoryCache.count > 0 ? Double(memoryUsage) / Double(memoryCache.count) : 0
+            averageItemSize: memoryCache.count > 0 ? Double(memoryUsage) / Double(memoryCache.count) : 0,
+            tagCount: tagCache.count
         )
     }
 
@@ -267,6 +287,7 @@ public actor CacheManager {
         memoryCache.removeAll()
         hashCache.removeAll()
         collectionCache.removeAll()
+        tagCache.removeAll()
         accessOrder = LinkedList()
         memoryHits = 0
         diskHits = 0
@@ -591,6 +612,7 @@ public struct AdvancedCacheStatistics: Sendable {
     public let totalEvictions: Int
     public let diskEvictions: Int
     public let averageItemSize: Double
+    public let tagCount: Int
 
     public var memoryUtilization: Double {
         maxMemoryBytes > 0 ? Double(memoryUsageBytes) / Double(maxMemoryBytes) : 0

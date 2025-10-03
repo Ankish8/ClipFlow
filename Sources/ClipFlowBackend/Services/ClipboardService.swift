@@ -13,6 +13,7 @@ public class ClipboardService: ClipboardServiceAPI {
     // Dependencies
     private let monitorService: ClipboardMonitorService
     private let storageService: StorageService
+    private let tagService: TagService
     private let performanceMonitor: PerformanceMonitor
 
     // Publishers
@@ -26,6 +27,7 @@ public class ClipboardService: ClipboardServiceAPI {
 
     private init() {
         self.storageService = StorageService()
+        self.tagService = TagService()
         self.performanceMonitor = PerformanceMonitor.shared
         self.monitorService = ClipboardMonitorService(
             storageService: storageService,
@@ -539,5 +541,51 @@ public class ClipboardService: ClipboardServiceAPI {
 
     public func deleteItem(_ itemId: UUID) async throws {
         try await deleteItems(ids: [itemId])
+    }
+
+    // MARK: - Tag Management
+
+    public func createTag(_ tag: Tag) async throws -> Tag {
+        return try await tagService.createTag(tag)
+    }
+
+    public func getAllTags() async throws -> [Tag] {
+        return try await tagService.getAllTags()
+    }
+
+    public func getTag(id: UUID) async throws -> Tag? {
+        return try await tagService.getTag(id: id)
+    }
+
+    public func updateTag(_ tag: Tag) async throws {
+        try await tagService.updateTag(tag)
+    }
+
+    public func deleteTag(id: UUID) async throws {
+        try await tagService.deleteTag(id: id)
+    }
+
+    public func assignTag(tagId: UUID, to itemId: UUID) async throws {
+        try await tagService.assignTag(tagId: tagId, to: itemId)
+    }
+
+    public func unassignTag(tagId: UUID, from itemId: UUID) async throws {
+        try await tagService.unassignTag(tagId: tagId, from: itemId)
+    }
+
+    public func getTagsForItem(itemId: UUID) async throws -> [Tag] {
+        return try await tagService.getTagsForItem(itemId: itemId)
+    }
+
+    public func getItemsWithTag(tagId: UUID) async throws -> [UUID] {
+        return try await tagService.getItemsWithTag(tagId: tagId)
+    }
+
+    public func getTagStatistics() async throws -> TagStatistics {
+        return try await tagService.getTagStatistics()
+    }
+
+    public func searchTags(query: String) async throws -> [Tag] {
+        return try await tagService.searchTags(query: query)
     }
 }
