@@ -14,6 +14,8 @@ struct ClipboardCardView: View {
     @State private var showCopyFeedback = false
     @State private var accentColor: Color? = nil
     @State private var showTooltip = false
+    @State private var itemTags: [Tag] = []
+    @State private var showingTagAssignment = false
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -28,6 +30,9 @@ struct ClipboardCardView: View {
             contentPreview
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            // Tags section
+            tagsSection
+            
             // Metadata footer
             cardFooter
         }
@@ -250,6 +255,75 @@ struct ClipboardCardView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
+    }
+
+    private var tagsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !itemTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(itemTags, id: \.id) { tag in
+                            TagChipView(
+                                tag: tag,
+                                isSelected: false
+                            ) {
+                                // Handle tag tap
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+            
+            // Tag assignment button
+            HStack {
+                Spacer()
+                
+                Button(action: {
+                    showingTagAssignment = true
+                }) {
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                showingTagAssignment = true
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+            Rectangle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(height: 0.5)
+                .padding(.top, -8)
+        )
+        .sheet(isPresented: $showingTagAssignment) {
+            TagAssignmentView(
+                item: item,
+                availableTags: viewModel.availableTags,
+                currentTags: itemTags,
+                onTagAssigned: { tag in
+                    if !itemTags.contains(where: { $0.id == tag.id }) {
+                        itemTags.append(tag)
+                        viewModel.assignTag(tag.id, to: item.id)
+                    }
+                },
+                onTagRemoved: { tag in
+                    itemTags.removeAll { $0.id == tag.id }
+                    viewModel.unassignTag(tag.id, from: item.id)
+                }
+            )
+        }
+        .onAppear {
+            Task {
+                itemTags = await viewModel.getTagsForItem(item.id)
+            }
+        }
     }
 
     private var cardFooter: some View {
