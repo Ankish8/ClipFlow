@@ -157,11 +157,11 @@ public class DatabaseManager {
     // MARK: - Database Operations
 
     public func write<T>(_ block: @escaping (Database) throws -> T) async throws -> T {
-        try await dbQueue.write(block)
+        try dbQueue.write(block)
     }
 
     public func read<T>(_ block: @escaping (Database) throws -> T) async throws -> T {
-        try await dbQueue.read(block)
+        try dbQueue.read(block)
     }
 
     // MARK: - Clipboard Items

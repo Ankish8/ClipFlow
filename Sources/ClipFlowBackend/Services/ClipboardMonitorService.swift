@@ -263,11 +263,15 @@ public class ClipboardMonitorService {
         let content: ClipboardContent?
         NSLog("🚀 About to enter content processing branches")
 
-        // FIXED priority order: Check native URLs first, then intelligent file/image detection, then text with URL detection
-        NSLog("🔍 Checking .URL: \(types.contains(.URL))")
-        if types.contains(.URL) {
+        // Check for Chrome-specific URL type
+        let chromeURLType = NSPasteboard.PasteboardType("org.chromium.source-url")
+        let hasChromeURL = types.contains(chromeURLType)
+
+        // FIXED priority order: Check native URLs first (including Chrome URLs), then intelligent file/image detection, then text with URL detection
+        NSLog("🔍 Checking .URL: \(types.contains(.URL)), Chrome URL: \(hasChromeURL)")
+        if types.contains(.URL) || hasChromeURL {
             print("🔗 Processing as native URL content")
-            content = await processURLContent(pasteboard)
+            content = await processURLContent(pasteboard, chromeType: hasChromeURL ? chromeURLType : nil)
         } else if types.contains(.fileURL) && !(types.contains(.png) || types.contains(.tiff)) {
             // Only process as file if it's a file WITHOUT image types (prevents duplication)
             print("📁 Processing as pure file content")
@@ -501,16 +505,32 @@ public class ClipboardMonitorService {
         ))
     }
 
-    private func processURLContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
-        guard let urlString = pasteboard.string(forType: .URL),
-              let url = URL(string: urlString) else { return nil }
+    private func processURLContent(_ pasteboard: NSPasteboard, chromeType: NSPasteboard.PasteboardType? = nil) async -> ClipboardContent? {
+        // Try Chrome URL type first if available
+        var urlString: String? = nil
+        if let chromeType = chromeType {
+            urlString = pasteboard.string(forType: chromeType)
+            NSLog("🔗 Got URL from Chrome type: \(urlString ?? "nil")")
+        }
 
-        // Fetch metadata asynchronously
+        // Fallback to standard URL type
+        if urlString == nil {
+            urlString = pasteboard.string(forType: .URL)
+        }
+
+        guard let urlStr = urlString, let url = URL(string: urlStr) else {
+            NSLog("❌ Failed to get URL from pasteboard")
+            return nil
+        }
+
+        NSLog("🔗 Processing URL content: \(url.absoluteString)")
+
+        // Fetch metadata asynchronously (currently disabled)
         let (title, description, favicon, preview) = await fetchURLMetadata(url)
 
         return .link(LinkContent(
             url: url,
-            title: title,
+            title: title ?? url.absoluteString,
             description: description,
             faviconData: favicon,
             previewImageData: preview
@@ -554,16 +574,96 @@ public class ClipboardMonitorService {
         let workspace = NSWorkspace.shared
         let runningApps = workspace.runningApplications
 
-        // Find the frontmost app
-        if let frontApp = runningApps.first(where: { $0.isActive }) {
-            return ItemSource(
-                applicationBundleID: frontApp.bundleIdentifier,
-                applicationName: frontApp.localizedName,
-                applicationIcon: frontApp.icon?.tiffRepresentation
-            )
+        // Get ClipFlow's bundle ID to exclude it
+        let clipFlowBundleID = Bundle.main.bundleIdentifier
+
+        // Strategy 1: Find the frontmost app (excluding ClipFlow itself)
+        var targetApp: NSRunningApplication? = runningApps.first(where: { app in
+            app.isActive && app.bundleIdentifier != clipFlowBundleID
+        })
+
+        // Strategy 2: If no active non-ClipFlow app, find the frontmost window's app
+        if targetApp == nil {
+            if let frontWindow = workspace.frontmostApplication,
+               frontWindow.bundleIdentifier != clipFlowBundleID {
+                targetApp = frontWindow
+                NSLog("📱 Using frontmost application fallback")
+            }
         }
 
-        return ItemSource()
+        // Strategy 3: Use any running app except ClipFlow as last resort
+        if targetApp == nil {
+            targetApp = runningApps.first(where: { app in
+                !app.isTerminated &&
+                app.bundleIdentifier != clipFlowBundleID &&
+                app.bundleIdentifier != "com.apple.dock" &&
+                app.bundleIdentifier != "com.apple.WindowManager"
+            })
+            if targetApp != nil {
+                NSLog("📱 Using any running app fallback")
+            }
+        }
+
+        // If we found an app, compress and return its info
+        if let frontApp = targetApp {
+            // Compress icon to reasonable size (TIFF can be huge for retina icons)
+            var iconData: Data? = nil
+            if let icon = frontApp.icon {
+                // Resize icon to standard 128x128 and convert to PNG for smaller size
+                let targetSize = NSSize(width: 128, height: 128)
+                let resizedIcon = NSImage(size: targetSize)
+                resizedIcon.lockFocus()
+                icon.draw(in: NSRect(origin: .zero, size: targetSize),
+                         from: NSRect(origin: .zero, size: icon.size),
+                         operation: .sourceOver,
+                         fraction: 1.0)
+                resizedIcon.unlockFocus()
+
+                // Convert to PNG for much smaller file size
+                if let tiffData = resizedIcon.tiffRepresentation,
+                   let bitmapRep = NSBitmapImageRep(data: tiffData),
+                   let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                    iconData = pngData
+                    NSLog("🎨 Compressed icon: \(frontApp.localizedName ?? "Unknown") from \(frontApp.icon?.tiffRepresentation?.count ?? 0) to \(pngData.count) bytes")
+                }
+            }
+
+            let source = ItemSource(
+                applicationBundleID: frontApp.bundleIdentifier,
+                applicationName: frontApp.localizedName,
+                applicationIcon: iconData
+            )
+
+            NSLog("📱 Captured source app: \(source.applicationName ?? "Unknown") (\(source.applicationBundleID ?? "nil"))")
+            return source
+        }
+
+        // Absolute fallback: Return System as the source with a generic icon
+        NSLog("⚠️ No valid application found - using System fallback")
+
+        // Create a generic system icon
+        var systemIconData: Data? = nil
+        let systemIcon = NSWorkspace.shared.icon(forFile: "/System")
+        let targetSize = NSSize(width: 128, height: 128)
+        let resizedIcon = NSImage(size: targetSize)
+        resizedIcon.lockFocus()
+        systemIcon.draw(in: NSRect(origin: .zero, size: targetSize),
+                       from: NSRect(origin: .zero, size: systemIcon.size),
+                       operation: .sourceOver,
+                       fraction: 1.0)
+        resizedIcon.unlockFocus()
+
+        if let tiffData = resizedIcon.tiffRepresentation,
+           let bitmapRep = NSBitmapImageRep(data: tiffData),
+           let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+            systemIconData = pngData
+        }
+
+        return ItemSource(
+            applicationBundleID: "com.apple.system",
+            applicationName: "System",
+            applicationIcon: systemIconData
+        )
     }
 
     // MARK: - Helper Methods

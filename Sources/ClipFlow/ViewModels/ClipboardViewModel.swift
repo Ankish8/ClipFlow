@@ -283,7 +283,7 @@ class ClipboardViewModel: ObservableObject {
 
         if let content = clipboardContent {
             let metadata = ItemMetadata.generate(for: content)
-            let source = ItemSource()
+            let source = getCurrentApplicationInfo()
 
             let item = ClipboardItem(
                 content: content,
@@ -411,6 +411,106 @@ class ClipboardViewModel: ObservableObject {
             attributedStringData: attributedStringData,
             plainTextFallback: plainTextFallback
         ))
+    }
+
+    // MARK: - App Source Detection
+
+    /// Captures information about the frontmost application (excluding ClipFlow itself)
+    /// Mirrors logic from ClipboardMonitorService.getCurrentApplicationInfo()
+    private func getCurrentApplicationInfo() -> ItemSource {
+        let workspace = NSWorkspace.shared
+        let runningApps = workspace.runningApplications
+
+        // Get ClipFlow's bundle ID to exclude it
+        let clipFlowBundleID = Bundle.main.bundleIdentifier
+
+        // Strategy 1: Find the frontmost app (excluding ClipFlow itself)
+        var targetApp: NSRunningApplication? = runningApps.first(where: { app in
+            app.isActive && app.bundleIdentifier != clipFlowBundleID
+        })
+
+        // Strategy 2: If no active non-ClipFlow app, find the frontmost window's app
+        if targetApp == nil {
+            if let frontWindow = workspace.frontmostApplication,
+               frontWindow.bundleIdentifier != clipFlowBundleID {
+                targetApp = frontWindow
+                NSLog("📱 Using frontmost application fallback")
+            }
+        }
+
+        // Strategy 3: Use any running app except ClipFlow as last resort
+        if targetApp == nil {
+            targetApp = runningApps.first(where: { app in
+                !app.isTerminated &&
+                app.bundleIdentifier != clipFlowBundleID &&
+                app.bundleIdentifier != "com.apple.dock" &&
+                app.bundleIdentifier != "com.apple.WindowManager"
+            })
+            if targetApp != nil {
+                NSLog("📱 Using any running app fallback")
+            }
+        }
+
+        // If we found an app, compress and return its info
+        if let frontApp = targetApp {
+            // Compress icon to reasonable size (TIFF can be huge for retina icons)
+            var iconData: Data? = nil
+            if let icon = frontApp.icon {
+                // Resize icon to standard 128x128 and convert to PNG for smaller size
+                let targetSize = NSSize(width: 128, height: 128)
+                let resizedIcon = NSImage(size: targetSize)
+                resizedIcon.lockFocus()
+                icon.draw(in: NSRect(origin: .zero, size: targetSize),
+                         from: NSRect(origin: .zero, size: icon.size),
+                         operation: .sourceOver,
+                         fraction: 1.0)
+                resizedIcon.unlockFocus()
+
+                // Convert to PNG for much smaller file size
+                if let tiffData = resizedIcon.tiffRepresentation,
+                   let bitmapRep = NSBitmapImageRep(data: tiffData),
+                   let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                    iconData = pngData
+                    NSLog("🎨 Compressed icon: \(frontApp.localizedName ?? "Unknown") from \(frontApp.icon?.tiffRepresentation?.count ?? 0) to \(pngData.count) bytes")
+                }
+            }
+
+            let source = ItemSource(
+                applicationBundleID: frontApp.bundleIdentifier,
+                applicationName: frontApp.localizedName,
+                applicationIcon: iconData
+            )
+
+            NSLog("📱 Captured source app: \(source.applicationName ?? "Unknown") (\(source.applicationBundleID ?? "nil"))")
+            return source
+        }
+
+        // Absolute fallback: Return System as the source with a generic icon
+        NSLog("⚠️ No valid application found - using System fallback")
+
+        // Create a generic system icon
+        var systemIconData: Data? = nil
+        let systemIcon = NSWorkspace.shared.icon(forFile: "/System")
+        let targetSize = NSSize(width: 128, height: 128)
+        let resizedIcon = NSImage(size: targetSize)
+        resizedIcon.lockFocus()
+        systemIcon.draw(in: NSRect(origin: .zero, size: targetSize),
+                       from: NSRect(origin: .zero, size: systemIcon.size),
+                       operation: .sourceOver,
+                       fraction: 1.0)
+        resizedIcon.unlockFocus()
+
+        if let tiffData = resizedIcon.tiffRepresentation,
+           let bitmapRep = NSBitmapImageRep(data: tiffData),
+           let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+            systemIconData = pngData
+        }
+
+        return ItemSource(
+            applicationBundleID: "com.apple.system",
+            applicationName: "System",
+            applicationIcon: systemIconData
+        )
     }
 
     func cleanup() {

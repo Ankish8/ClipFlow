@@ -12,6 +12,8 @@ struct ClipboardCardView: View {
     @State private var isDeleting = false
     @State private var cachedImagePath: String? = nil
     @State private var showCopyFeedback = false
+    @State private var accentColor: Color? = nil
+    @State private var showTooltip = false
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -84,10 +86,13 @@ struct ClipboardCardView: View {
             // Double-click to paste and hide overlay
             pasteAndHideOverlay()
         }
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .bottomTrailing) {
             if isHovering && !isDeleting {
                 quickActionButtons
                     .contentShape(Rectangle())
+                    .padding(.bottom, 44) // Position above footer (footer is ~40px + spacing)
+                    .padding(.trailing, 8) // Add right margin
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                     .onHover { hovering in
                         // Keep the card hover state active when hovering over buttons
                         withAnimation(.easeInOut(duration: 0.15)) {
@@ -106,6 +111,11 @@ struct ClipboardCardView: View {
                         }
                     }
                 }
+            }
+
+            // Extract dominant color from app icon for card theming
+            Task {
+                await extractAccentColor()
             }
         }
     }
@@ -136,6 +146,24 @@ struct ClipboardCardView: View {
                     Color(.sRGB, red: 0.3, green: 0.3, blue: 0.3, opacity: 1.0),
                     lineWidth: 1
                 )
+
+            // Subtle colored accent border (inner border)
+            if let accentColor = accentColor {
+                RoundedRectangle(cornerRadius: 11.5)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                accentColor.opacity(0.20),
+                                accentColor.opacity(0.12),
+                                accentColor.opacity(0.20)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.5
+                    )
+                    .padding(0.5) // Inset slightly from outer border
+            }
         }
         .shadow(
             color: colorScheme == .light ?
@@ -170,8 +198,28 @@ struct ClipboardCardView: View {
                     )
 
                 Spacer()
+
+                // Source app icon badge
+                ZStack(alignment: .topTrailing) {
+                    appIconBadge
+
+                    // Custom tooltip overlay
+                    if showTooltip, let appName = item.source.applicationName {
+                        Text(appName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(Color.black.opacity(0.85))
+                            )
+                            .offset(x: 0, y: -30)
+                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
+                }
             }
-            
+
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -284,42 +332,42 @@ struct ClipboardCardView: View {
     // MARK: - Quick Actions
 
     private var quickActionButtons: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             // Copy action
             quickActionButton(icon: "doc.on.doc", action: copyItem, color: .primary)
-            
+
             // Delete action
             quickActionButton(icon: "trash", action: deleteItem, color: .primary)
-            
+
             // Pin/Favorite action
             quickActionButton(icon: item.isFavorite ? "star.fill" : "star", action: pinItem, color: .primary)
         }
-        .padding(8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(colorScheme == .light ? 
-                    Color(.sRGB, red: 0.98, green: 0.98, blue: 0.99, opacity: 0.95) :
-                    Color(.sRGB, red: 0.15, green: 0.15, blue: 0.16, opacity: 0.95)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(colorScheme == .light ?
+                    Color(.sRGB, red: 0.98, green: 0.98, blue: 0.99, opacity: 0.96) :
+                    Color(.sRGB, red: 0.15, green: 0.15, blue: 0.16, opacity: 0.96)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 8)
                         .stroke(colorScheme == .light ?
-                            Color(.sRGB, red: 0.85, green: 0.87, blue: 0.9, opacity: 0.8) :
-                            Color(.sRGB, red: 0.35, green: 0.35, blue: 0.36, opacity: 0.8),
-                            lineWidth: 1
+                            Color(.sRGB, red: 0.85, green: 0.87, blue: 0.9, opacity: 0.7) :
+                            Color(.sRGB, red: 0.35, green: 0.35, blue: 0.36, opacity: 0.7),
+                            lineWidth: 0.5
                         )
                 )
                 .shadow(
                     color: colorScheme == .light ?
-                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.1) :
-                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.3),
-                    radius: 4,
+                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.08) :
+                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.25),
+                    radius: 3,
                     x: 0,
-                    y: 2
+                    y: 1
                 )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .padding(8)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func quickActionButton(icon: String, action: @escaping () -> Void, color: Color) -> some View {
@@ -523,6 +571,116 @@ struct ClipboardCardView: View {
         return text.count > maxLength ?
             String(text.prefix(maxLength)) + "..." :
             text
+    }
+
+    // MARK: - Source App Icon
+
+    /// Converts stored icon Data (TIFF format) to SwiftUI Image
+    private func iconImage(from data: Data) -> Image? {
+        guard let nsImage = NSImage(data: data) else { return nil }
+        return Image(nsImage: nsImage)
+    }
+
+    /// App icon badge view showing the source application
+    private var appIconBadge: some View {
+        Group {
+            if let iconData = item.source.applicationIcon {
+                // Debug logging for icon data
+                let _ = NSLog("🎯 App icon data - BundleID: \(item.source.applicationBundleID ?? "nil"), Name: \(item.source.applicationName ?? "nil"), Icon size: \(iconData.count) bytes")
+
+                if let iconImage = iconImage(from: iconData) {
+                    iconImage
+                        .resizable()
+                        .interpolation(.high)
+                        .antialiased(true)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 28, height: 28)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(colorScheme == .light ?
+                                    Color.white.opacity(0.8) :
+                                    Color.black.opacity(0.4),
+                                    lineWidth: 1.5
+                                )
+                        )
+                        .shadow(
+                            color: Color.black.opacity(0.15),
+                            radius: 2,
+                            x: 0,
+                            y: 1
+                        )
+                        .onHover { hovering in
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                showTooltip = hovering
+                            }
+                        }
+                } else {
+                    let _ = NSLog("❌ Failed to convert icon data to NSImage for: \(item.source.applicationName ?? "Unknown")")
+                    // Fallback when icon data exists but conversion fails
+                    Image(systemName: "app.badge")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(colorScheme == .light ?
+                            Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) :
+                            Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
+                        )
+                        .frame(width: 22, height: 22)
+                }
+            } else {
+                let _ = NSLog("⚠️ No icon data for app: \(item.source.applicationName ?? "Unknown"), BundleID: \(item.source.applicationBundleID ?? "nil")")
+                // Fallback to SF Symbol if no app icon available
+                Image(systemName: "app.badge")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(colorScheme == .light ?
+                        Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) :
+                        Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
+                    )
+                    .frame(width: 22, height: 22)
+            }
+        }
+    }
+
+    // MARK: - Color Extraction
+
+    /// Extracts accent color from app icon for card theming
+    private func extractAccentColor() async {
+        let appName = item.source.applicationName ?? "Unknown"
+        NSLog("🎨 Starting color extraction for: \(appName)")
+
+        // Check cache first
+        if let bundleID = item.source.applicationBundleID {
+            if let cachedColor = await AppIconColorCache.shared.getColor(for: bundleID) {
+                NSLog("✅ Using cached color for: \(appName)")
+                accentColor = cachedColor
+                return
+            }
+        }
+
+        // Extract color from icon data
+        guard let iconData = item.source.applicationIcon else {
+            NSLog("⚠️ No icon data to extract color from for: \(appName)")
+            return
+        }
+
+        guard let nsImage = NSImage(data: iconData) else {
+            NSLog("❌ Failed to create NSImage from icon data for: \(appName)")
+            return
+        }
+
+        guard let extractedColor = nsImage.extractDominantColor() else {
+            NSLog("❌ Failed to extract dominant color for: \(appName)")
+            return
+        }
+
+        NSLog("✅ Successfully extracted color for: \(appName)")
+
+        // Cache the extracted color
+        if let bundleID = item.source.applicationBundleID {
+            await AppIconColorCache.shared.setColor(extractedColor, for: bundleID)
+        }
+
+        accentColor = extractedColor
+        NSLog("🎨 Applied accent color to card for: \(appName)")
     }
 }
 

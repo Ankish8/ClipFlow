@@ -5,6 +5,7 @@ struct ClipboardOverlayView: View {
     @ObservedObject var viewModel: ClipboardViewModel
     @State private var selectedIndex: Int = 0
     @State private var selectedFilter: ContentFilter = .all
+    @State private var selectedApps: Set<String> = []
     @State private var isDragging: Bool = false
 
     // Track if this is using a shared viewModel
@@ -52,6 +53,14 @@ struct ClipboardOverlayView: View {
             }
         }
 
+        // Apply app filtering
+        if !selectedApps.isEmpty {
+            items = items.filter { item in
+                guard let bundleID = item.source.applicationBundleID else { return false }
+                return selectedApps.contains(bundleID)
+            }
+        }
+
         return items
     }
 
@@ -90,7 +99,7 @@ struct ClipboardOverlayView: View {
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                // Left sidebar with content type filters
+                // Left sidebar with content type filters only
                 VStack(spacing: 0) {
                     Spacer()
                         .frame(minHeight: 20)
@@ -106,11 +115,17 @@ struct ClipboardOverlayView: View {
 
                 // Main content area
                 VStack(spacing: 0) {
-                    // Top padding for better visual balance
-                    Spacer().frame(height: 20)
+                    // Top spacing for vertical balance
+                    Spacer().frame(height: 12)
 
-                    // Additional spacing above cards
-                    Spacer().frame(height: 16)
+                    // Horizontal chip bar for app filtering
+                    AppChipBarView(
+                        items: viewModel.items,
+                        selectedApps: $selectedApps
+                    )
+
+                    // Spacing between chip bar and cards
+                    Spacer().frame(height: 20)
 
                     // Main cards container - centered and full width
                     ScrollViewReader { proxy in
@@ -162,14 +177,7 @@ struct ClipboardOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // REMOVED: .opacity(isDragging ? 0.0 : 1.0) - was hiding entire overlay during drag
         // Drag preview is handled by SwiftUI's .draggable modifier
-        .background(
-            overlayBackground
-                .onTapGesture {
-                    // Tap on background dismisses overlay
-                    closeOverlay()
-                }
-                .contentShape(Rectangle())
-        )
+        .background(overlayBackground)
         .onAppear {
             // Only initialize if this is a standalone viewModel (not shared)
             if !isSharedViewModel {
@@ -248,7 +256,6 @@ struct ClipboardOverlayView: View {
                 .foregroundColor(.secondary)
 
             Spacer()
-
         }
         .padding(.vertical, 12)
     }

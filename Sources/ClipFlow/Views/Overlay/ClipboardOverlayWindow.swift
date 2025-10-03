@@ -5,6 +5,9 @@ class ClipboardOverlayWindow: NSWindow {
     private var initialFrame: NSRect = .zero
     private var finalFrame: NSRect = .zero
     private var overlayView: ClipboardOverlayView?
+    private var localEventMonitor: Any? // Monitor clicks within our app
+    private var globalEventMonitor: Any? // Monitor clicks in other apps
+    private var lastInsideClickTime: Date? // Track last inside click to prevent double-firing
 
     init() {
         // Start with temporary frame - will be set properly in setupWindow
@@ -42,13 +45,44 @@ class ClipboardOverlayWindow: NSWindow {
     }
 
     private func setupOutsideClickMonitoring() {
-        // Global event monitor for clicks outside the overlay
-        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+        // Local event monitor - handles clicks within our app
+        // This catches clicks on our menu bar, other windows, etc.
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self = self, self.isVisible else { return event }
+
+            // Get click location in screen coordinates
+            let clickLocation = NSEvent.mouseLocation
+
+            // Check if click is inside window frame
+            if self.frame.contains(clickLocation) {
+                // Click is inside window - record time and don't close overlay
+                self.lastInsideClickTime = Date()
+                NSLog("👆 Local: Click inside overlay at \(clickLocation) - keeping open")
+                return event
+            } else {
+                // Click is outside window but within our app - close overlay
+                NSLog("👆 Local: Click outside overlay at \(clickLocation) - closing")
+                NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+                return event
+            }
+        }
+
+        // Global event monitor - handles clicks in other apps (desktop, other applications)
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self = self, self.isVisible else { return }
 
-            // CRITICAL FIX: Notify OverlayManager instead of calling hideOverlay() directly
-            // This prevents state desync between window and manager
-            NSLog("👆 Click outside detected - notifying manager to hide overlay")
+            // Check if this global event is happening right after an inside click
+            // If so, ignore it (it's just the focus change from clicking inside)
+            if let lastClick = self.lastInsideClickTime {
+                let timeSinceLastClick = Date().timeIntervalSince(lastClick)
+                if timeSinceLastClick < 0.2 {  // 200ms window
+                    NSLog("👆 Global: Ignoring - recent inside click (\(Int(timeSinceLastClick * 1000))ms ago)")
+                    return
+                }
+            }
+
+            // Real click in another app - close the overlay
+            NSLog("👆 Global: Click in other app - closing overlay")
             NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         }
     }
@@ -57,7 +91,7 @@ class ClipboardOverlayWindow: NSWindow {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
-        let overlayHeight: CGFloat = 300 // Compact height - internal spacing optimized
+        let overlayHeight: CGFloat = 320 // Height increased to fit all sidebar icons + chip bar
 
         // Final position: full width, stuck to bottom
         finalFrame = NSRect(
@@ -119,14 +153,19 @@ class ClipboardOverlayWindow: NSWindow {
         overlayView = view
     }
 
-    // Remove the global event monitor when window is deallocated
+    // Cleanup is handled automatically via weak self in the event monitor closures
     deinit {
-        // Note: In production, we should store the monitor reference and remove it
-        // For now, we'll rely on weak self to prevent retain cycles
+        // Note: Both local and global event monitors are automatically cleaned up
+        // We use weak self in the closures to prevent retain cycles
     }
 
-    // CRITICAL: Prevent window from becoming key to avoid stealing focus from text fields
+    // Allow window to become key so clicks work on first tap
     override var canBecomeKey: Bool {
+        return true
+    }
+
+    // Prevent window from becoming main to avoid focus rings on buttons
+    override var canBecomeMain: Bool {
         return false
     }
 
