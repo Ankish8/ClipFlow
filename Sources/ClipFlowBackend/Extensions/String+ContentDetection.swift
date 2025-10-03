@@ -33,11 +33,22 @@ public extension String {
             }
         }
 
-        // For multi-line content, check if it's primarily URLs
+        // For multi-line content, check if it's a URL wrapped across lines
         let lines = trimmed.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
         guard !lines.isEmpty else { return false }
 
+        // Check if the first line starts with http:// or https:// (common for wrapped URLs)
+        let firstLine = lines[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        if firstLine.hasPrefix("http://") || firstLine.hasPrefix("https://") {
+            // Try joining all lines together to form a complete URL
+            let joinedURL = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.joined()
+            if URL(string: joinedURL) != nil {
+                return true
+            }
+        }
+
+        // Fallback: Check if it's primarily URLs (multiple separate URLs)
         let urlLikeLines = lines.filter { line in
             let cleanLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
             return cleanLine.hasPrefix("http://") || cleanLine.hasPrefix("https://") || cleanLine.hasPrefix("www.")

@@ -353,17 +353,27 @@ public class ClipboardMonitorService {
 
         // Check if it's a URL first - prioritize URL detection
         NSLog("🔍 About to check URL conversion: isValidURL=\(trimmedText.isValidURL)")
-        if trimmedText.isValidURL, let url = URL(string: trimmedText) {
-            NSLog("🔗 SUCCESS: Converting text to link content for URL: \(url)")
-            // TEMPORARY FIX: Skip metadata fetching to avoid hanging
-            NSLog("🔄 Skipping metadata fetch for debugging")
-            return .link(LinkContent(
-                url: url,
-                title: url.absoluteString,
-                description: nil,
-                faviconData: nil,
-                previewImageData: nil
-            ))
+        if trimmedText.isValidURL {
+            // Clean the text by removing newlines (for multi-line URLs from browsers)
+            let cleanedText = trimmedText.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .joined()
+            NSLog("🧹 Cleaned text for URL creation: \(cleanedText.prefix(100))")
+
+            if let url = URL(string: cleanedText) {
+                NSLog("🔗 SUCCESS: Converting text to link content for URL: \(url)")
+                // TEMPORARY FIX: Skip metadata fetching to avoid hanging
+                NSLog("🔄 Skipping metadata fetch for debugging")
+                return .link(LinkContent(
+                    url: url,
+                    title: url.absoluteString,
+                    description: nil,
+                    faviconData: nil,
+                    previewImageData: nil
+                ))
+            } else {
+                NSLog("❌ URL creation failed even after cleaning - treating as plain text")
+            }
         } else {
             NSLog("❌ URL validation failed - treating as plain text")
         }

@@ -58,10 +58,11 @@ class ClipboardViewModel: ObservableObject {
     }
 
     private func handleNewItem(_ item: ClipboardItem) {
-        // Insert at beginning and remove duplicates (by ID or hash)
+        // Remove duplicates by ID or hash, but KEEP the new item (it might have better classification)
         items.removeAll { existingItem in
             existingItem.id == item.id || existingItem.metadata.hash == item.metadata.hash
         }
+        // Insert the NEW item at the beginning (it has the latest/correct classification)
         items.insert(item, at: 0)
 
         // Limit to reasonable number for performance
@@ -95,7 +96,18 @@ class ClipboardViewModel: ObservableObject {
 
                 // Only update items if not currently dragging
                 if !isDragInProgress {
-                    items = history
+                    // Merge history with existing items, preferring existing (newer/correct) items
+                    var mergedItems: [ClipboardItem] = items
+                    for historyItem in history {
+                        // Only add if not already present (by ID or hash)
+                        let isDuplicate = mergedItems.contains { existing in
+                            existing.id == historyItem.id || existing.metadata.hash == historyItem.metadata.hash
+                        }
+                        if !isDuplicate {
+                            mergedItems.append(historyItem)
+                        }
+                    }
+                    items = mergedItems
                 } else {
                     print("🛡️ Skipping data update during drag operation")
                 }
@@ -310,6 +322,20 @@ class ClipboardViewModel: ObservableObject {
     private func processTextFromPasteboard(_ pasteboard: NSPasteboard) -> ClipboardContent? {
         guard let text = pasteboard.string(forType: .string) else { return nil }
         print("📄 Processing text: \(text.prefix(50))...")
+
+        // Check if it's a URL first (same logic as backend)
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedText.isValidURL {
+            // Clean the text by removing newlines (for multi-line URLs)
+            let cleanedText = trimmedText.components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .joined()
+
+            if let url = URL(string: cleanedText) {
+                print("🔗 Simple monitor: Detected URL, creating link content")
+                return .link(LinkContent(url: url, title: url.absoluteString))
+            }
+        }
 
         return .text(TextContent(plainText: text))
     }
