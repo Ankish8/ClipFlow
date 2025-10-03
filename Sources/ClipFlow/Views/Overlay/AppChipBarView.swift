@@ -84,13 +84,13 @@ struct AppChipBarView: View {
             .background(
                 Capsule()
                     .fill(isSelected ?
-                        Color.accentColor :
+                        Color.customAccent :
                         Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12)
                     )
                     .overlay(
                         Capsule()
                             .stroke(isSelected ?
-                                Color.accentColor.opacity(0.3) :
+                                Color.customAccent.opacity(0.3) :
                                 Color.primary.opacity(0.15),
                                 lineWidth: isSelected ? 0 : 0.5)
                     )
@@ -149,13 +149,13 @@ struct AppChipBarView: View {
             .background(
                 Capsule()
                     .fill(isSelected ?
-                        Color.accentColor :
+                        Color.customAccent :
                         Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12)
                     )
                     .overlay(
                         Capsule()
                             .stroke(isSelected ?
-                                Color.accentColor.opacity(0.3) :
+                                Color.customAccent.opacity(0.3) :
                                 Color.primary.opacity(0.15),
                                 lineWidth: isSelected ? 0 : 0.5)
                     )

@@ -374,6 +374,7 @@ struct ColorPreviewCard: View {
 // MARK: - Multi Content Preview Card
 struct MultiPreviewCard: View {
     let content: MultiContent
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -382,7 +383,7 @@ struct MultiPreviewCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: "square.stack.3d.up")
                         .font(.system(size: 20))
-                        .foregroundColor(.purple)
+                        .foregroundColor(colorScheme == .dark ? .white : .primary)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(content.items.count) Items")

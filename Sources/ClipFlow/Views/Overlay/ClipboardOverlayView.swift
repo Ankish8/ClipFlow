@@ -274,7 +274,7 @@ struct ClipboardOverlayView: View {
             VStack(spacing: 3) {
                 Image(systemName: filter.icon)
                     .font(.system(size: 14, weight: selectedFilter == filter ? .semibold : .medium))
-                    .foregroundColor(selectedFilter == filter ? .accentColor : .secondary)
+                    .foregroundColor(selectedFilter == filter ? (colorScheme == .dark ? .white : .primary) : .secondary)
 
                 Text(filter.rawValue)
                     .font(.system(size: 9, weight: selectedFilter == filter ? .semibold : .medium))
@@ -285,12 +285,12 @@ struct ClipboardOverlayView: View {
             .background(
                 RoundedRectangle(cornerRadius: 10)
                     .fill(selectedFilter == filter ?
-                        Color.accentColor.opacity(0.12) :
+                        Color.customAccent.opacity(0.12) :
                         Color.primary.opacity(0.03))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .stroke(selectedFilter == filter ?
-                                Color.accentColor.opacity(0.2) :
+                                Color.customAccent.opacity(0.2) :
                                 Color.primary.opacity(0.08),
                                 lineWidth: selectedFilter == filter ? 1.5 : 0.5)
                     )

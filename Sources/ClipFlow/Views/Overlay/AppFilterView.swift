@@ -126,13 +126,13 @@ struct AppFilterView: View {
                 // Item count badge
                 Text("\(app.itemCount)")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.8))
+                    .foregroundColor(isSelected ? (colorScheme == .dark ? .white : .primary) : .secondary.opacity(0.8))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(
                         Capsule()
                             .fill(isSelected ?
-                                Color.accentColor.opacity(0.12) :
+                                Color.customAccent.opacity(0.12) :
                                 Color.secondary.opacity(0.08))
                     )
             }
@@ -142,12 +142,12 @@ struct AppFilterView: View {
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ?
-                        Color.accentColor.opacity(0.10) :
+                        Color.customAccent.opacity(0.10) :
                         Color.primary.opacity(0.02))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(isSelected ?
-                                Color.accentColor.opacity(0.3) :
+                                Color.customAccent.opacity(0.3) :
                                 Color.primary.opacity(0.06),
                                 lineWidth: isSelected ? 1.5 : 0.5)
                     )

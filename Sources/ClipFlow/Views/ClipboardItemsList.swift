@@ -96,7 +96,7 @@ struct ClipboardItemRow: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
+                .fill(isSelected ? Color.customAccent.opacity(0.2) : Color.clear)
         )
         .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
@@ -104,6 +104,7 @@ struct ClipboardItemRow: View {
 
 struct ContentTypeIcon: View {
     let content: ClipboardContent
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         Image(systemName: iconName)
@@ -128,13 +129,13 @@ struct ContentTypeIcon: View {
     private var iconColor: Color {
         switch content {
         case .text: return .primary
-        case .richText: return .purple
-        case .image: return .green
-        case .file: return .orange
-        case .link: return .blue
-        case .code: return .mint
-        case .color: return .pink
-        case .snippet: return .yellow
+        case .richText: return colorScheme == .dark ? .blue : .primary
+        case .image: return colorScheme == .dark ? .green : .primary
+        case .file: return colorScheme == .dark ? .orange : .primary
+        case .link: return colorScheme == .dark ? .blue : .primary
+        case .code: return colorScheme == .dark ? .mint : .primary
+        case .color: return colorScheme == .dark ? .pink : .primary
+        case .snippet: return colorScheme == .dark ? .yellow : .primary
         case .multiple: return .secondary
         }
     }

@@ -9,6 +9,7 @@ struct ClipFlowApp: App {
         // Hidden window for menu bar app
         Settings {
             SettingsView()
+                .accentColor(.customAccent)
         }
     }
 }

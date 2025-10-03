@@ -181,7 +181,7 @@ struct AboutSettingsView: View {
         VStack(spacing: 20) {
             Image(systemName: "doc.on.clipboard")
                 .font(.system(size: 64))
-                .foregroundColor(.accentColor)
+                .foregroundColor(.customAccent)
 
             VStack(spacing: 4) {
                 Text("ClipFlow")
@@ -244,7 +244,7 @@ struct FeatureRow: View {
     var body: some View {
         HStack {
             Image(systemName: icon)
-                .foregroundColor(.accentColor)
+                .foregroundColor(.customAccent)
                 .frame(width: 16)
             Text(text)
                 .font(.body)

@@ -748,7 +748,7 @@ struct ContentTypeInfo {
             }
             return ContentTypeInfo(name: "Text", icon: "doc.text", color: .blue)
         case .richText:
-            return ContentTypeInfo(name: "Rich Text", icon: "doc.richtext", color: .purple)
+            return ContentTypeInfo(name: "Rich Text", icon: "doc.richtext", color: .blue)
         case .image:
             return ContentTypeInfo(name: "Image", icon: "photo", color: .green)
         case .file:
