@@ -68,8 +68,8 @@ struct ClipboardCardView: View {
                 isHovering = hovering
             }
         }
-        .draggable(dragData) {
-            dragPreview
+        .onDrag {
+            provideDragData()
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 5)
@@ -442,6 +442,27 @@ struct ClipboardCardView: View {
 
 
     // MARK: - Drag and Drop Support
+
+    /// Provides NSItemProvider for drag-and-drop with proper file handling
+    private func provideDragData() -> NSItemProvider {
+        switch item.content {
+        case .image(_):
+            // For images, use the pre-cached file path (created async in onAppear)
+            // This provides instant drag with zero latency
+            if let cachedPath = cachedImagePath {
+                let fileURL = URL(fileURLWithPath: cachedPath)
+                let provider = NSItemProvider(contentsOf: fileURL)!
+                return provider
+            } else {
+                // Fallback if cache isn't ready yet (shouldn't happen)
+                return NSItemProvider(object: "[Image]" as NSString)
+            }
+
+        default:
+            // For text and other types, provide string data
+            return NSItemProvider(object: dragData as NSString)
+        }
+    }
 
     private var dragData: String {
         switch item.content {

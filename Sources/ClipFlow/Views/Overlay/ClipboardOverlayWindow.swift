@@ -25,7 +25,7 @@ class ClipboardOverlayWindow: NSWindow {
         // Window properties
         isOpaque = false
         backgroundColor = NSColor.clear
-        hasShadow = true
+        hasShadow = false  // No shadow for clean glassmorphism effect
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         isMovableByWindowBackground = false

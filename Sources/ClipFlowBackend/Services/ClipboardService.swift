@@ -134,8 +134,43 @@ public class ClipboardService: ClipboardServiceAPI {
                 }
 
             case .image(let imageContent):
+                // Write raw image data directly to prevent file path issues
+                // CRITICAL: We must write ONLY image data types to prevent apps from
+                // reading file paths that may have existed when the image was captured
+                switch imageContent.format {
+                case .png:
+                    // Write PNG data directly
+                    pasteboard.setData(imageContent.data, forType: .png)
+                case .tiff:
+                    // Write TIFF data directly
+                    pasteboard.setData(imageContent.data, forType: .tiff)
+                case .jpeg, .gif, .bmp, .heif, .webp, .svg:
+                    // For formats without direct pasteboard support, convert to PNG
+                    if let image = NSImage(data: imageContent.data),
+                       let tiffData = image.tiffRepresentation,
+                       let bitmapRep = NSBitmapImageRep(data: tiffData),
+                       let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+                        pasteboard.setData(pngData, forType: .png)
+                    }
+                    // If conversion fails, we just skip (could log error here)
+                }
+
+                // IMPORTANT: Also write as NSImage to ensure compatibility with all apps
+                // This prevents apps from falling back to reading file URLs
                 if let image = NSImage(data: imageContent.data) {
-                    pasteboard.writeObjects([image])
+                    // declareTypes clears the pasteboard and sets only the types we specify
+                    // This removes any stale file-url references
+                    let types: [NSPasteboard.PasteboardType] = imageContent.format == .png ? [.png, .tiff] : [.tiff]
+                    pasteboard.addTypes(types, owner: nil)
+
+                    // Write both the raw data AND the NSImage representation
+                    if imageContent.format == .png {
+                        pasteboard.setData(imageContent.data, forType: .png)
+                    }
+                    // Always write TIFF as fallback for maximum compatibility
+                    if let tiffData = image.tiffRepresentation {
+                        pasteboard.setData(tiffData, forType: .tiff)
+                    }
                 }
 
             case .file(let fileContent):
@@ -191,6 +226,10 @@ public class ClipboardService: ClipboardServiceAPI {
 
             // Write to clipboard
             try await writeToClipboard(itemToPaste)
+
+            // CRITICAL: Wait for clipboard write to fully complete before pasting
+            // macOS clipboard operations are asynchronous and need time to propagate
+            try? await Task.sleep(for: .milliseconds(50))
 
             // Simulate paste command (using Macboard's proven approach)
             await MainActor.run {

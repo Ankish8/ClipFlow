@@ -199,28 +199,24 @@ struct ClipboardOverlayView: View {
 
     private var overlayBackground: some View {
         ZStack {
-            // Base neutral gradient tuned for contrast with cards
-            LinearGradient(
-                colors: colorScheme == .light ? [
-                    // Slightly darker than before to improve contrast with near-white cards
-                    Color(.sRGB, red: 0.86, green: 0.88, blue: 0.90, opacity: 1.0),
-                    Color(.sRGB, red: 0.80, green: 0.82, blue: 0.85, opacity: 1.0)
-                ] : [
-                    // Slightly lighter midtones so dark cards (0.12) stand out over the center
-                    Color(.sRGB, red: 0.18, green: 0.18, blue: 0.19, opacity: 1.0),
-                    Color(.sRGB, red: 0.12, green: 0.12, blue: 0.13, opacity: 1.0)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+            // Frosted glass blur effect (adapts automatically to light/dark mode)
+            VisualEffectView(
+                material: .hudWindow,
+                blendingMode: .behindWindow
             )
 
-            // Subtle center spotlight to lift area behind cards
+            // Subtle tinted overlay for depth (light in light mode, dark in dark mode)
+            (colorScheme == .light ?
+                Color.white.opacity(0.25) :
+                Color.black.opacity(0.35))
+
+            // Center glow to lift the card area
             RadialGradient(
                 colors: colorScheme == .light ? [
-                    Color.white.opacity(0.10),
+                    Color.white.opacity(0.15),
                     Color.white.opacity(0.0)
                 ] : [
-                    Color.white.opacity(0.06),
+                    Color.white.opacity(0.08),
                     Color.white.opacity(0.0)
                 ],
                 center: .center,
@@ -228,18 +224,18 @@ struct ClipboardOverlayView: View {
                 endRadius: 600
             )
 
-            // Edge vignette to focus attention and enhance perceived contrast
+            // Edge vignette for frosted glass depth
             LinearGradient(
                 colors: colorScheme == .light ? [
-                    Color.black.opacity(0.06),
+                    Color.black.opacity(0.08),
                     Color.clear,
                     Color.clear,
-                    Color.black.opacity(0.06)
+                    Color.black.opacity(0.08)
                 ] : [
-                    Color.black.opacity(0.12),
+                    Color.black.opacity(0.15),
                     Color.clear,
                     Color.clear,
-                    Color.black.opacity(0.12)
+                    Color.black.opacity(0.15)
                 ],
                 startPoint: .leading,
                 endPoint: .trailing
