@@ -145,18 +145,18 @@ struct ImagePreviewCard: View {
     let content: ImageContent
 
     var body: some View {
-        VStack(spacing: 8) {
-            // Image preview - much larger for better visibility
+        VStack(spacing: 6) {
+            // Image preview - larger for better visibility
             if let nsImage = NSImage(data: content.data) {
                 Image(nsImage: nsImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 140)
+                    .frame(maxHeight: 180)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color.secondary.opacity(0.2))
-                    .frame(height: 140)
+                    .frame(height: 180)
                     .overlay(
                         Image(systemName: "photo")
                             .foregroundColor(.secondary)
@@ -164,16 +164,16 @@ struct ImagePreviewCard: View {
                     )
             }
 
-            Spacer(minLength: 6)
+            Spacer(minLength: 4)
 
-            // Image info
-            VStack(spacing: 4) {
+            // Image info - compact layout
+            VStack(spacing: 3) {
                 Text("\(content.format.rawValue.uppercased())")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.primary)
 
                 Text("\(Int(content.dimensions.width)) × \(Int(content.dimensions.height))")
-                    .font(.system(size: 11))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
         }

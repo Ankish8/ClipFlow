@@ -260,7 +260,7 @@ public class ClipboardMonitorService {
             }
         }
 
-        let content: ClipboardContent?
+        var content: ClipboardContent?
         NSLog("🚀 About to enter content processing branches")
 
         // Check for Chrome-specific URL type
@@ -272,29 +272,52 @@ public class ClipboardMonitorService {
         if types.contains(.URL) || hasChromeURL {
             print("🔗 Processing as native URL content")
             content = await processURLContent(pasteboard, chromeType: hasChromeURL ? chromeURLType : nil)
-        } else if types.contains(.fileURL) && !(types.contains(.png) || types.contains(.tiff)) {
-            // Only process as file if it's a file WITHOUT image types (prevents duplication)
-            print("📁 Processing as pure file content")
-            content = await processFileContent(pasteboard)
-        } else if types.contains(.png) || types.contains(.tiff) {
+        } else if types.contains(.fileURL) {
+            // Check if file URLs contain image files
+            if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+                let fileURLs = urls.filter { $0.isFileURL }
+                let hasImageFiles = fileURLs.contains(where: { isImageFile($0) })
+
+                if hasImageFiles {
+                    // Process as image if any URLs are image files
+                    print("🖼️ Processing file URLs as image content (detected image files)")
+                    content = await processImageContent(pasteboard, fileURLs: fileURLs.filter { isImageFile($0) })
+                } else if !(types.contains(.png) || types.contains(.tiff)) {
+                    // Only process as file if it's a file WITHOUT image types (prevents duplication)
+                    print("📁 Processing as pure file content")
+                    content = await processFileContent(pasteboard)
+                }
+            }
+        }
+
+        // If content not set yet, check for pasteboard image types
+        if content == nil && (types.contains(.png) || types.contains(.tiff)) {
             // Handle images - ALWAYS process as images, regardless of whether they have fileURL
             NSLog("🔍 Checking .png/.tiff: \(types.contains(.png)) / \(types.contains(.tiff))")
-            print("🖼️ Processing as image content (files or pure images)")
+            print("🖼️ Processing as image content (pasteboard types)")
             content = await processImageContent(pasteboard)
-        } else if types.contains(.rtf) {
+        }
+
+        if content == nil, types.contains(.rtf) {
             NSLog("🔍 Checking .rtf: \(types.contains(.rtf))")
             print("📝 Processing as rich text content")
             content = await processRichTextContent(pasteboard)
-        } else if types.contains(.string) {
+        }
+
+        if content == nil, types.contains(.string) {
             NSLog("🔍 Checking .string: \(types.contains(.string))")
             NSLog("📄 Processing as text content - about to call processTextContent")
             content = await processTextContent(pasteboard) // This will detect URLs in text
             NSLog("📄 Returned from processTextContent: \(content != nil ? "SUCCESS" : "NIL")")
-        } else if types.contains(.color) {
+        }
+
+        if content == nil, types.contains(.color) {
             NSLog("🔍 Checking .color: \(types.contains(.color))")
             print("🎨 Processing as color content")
             content = await processColorContent(pasteboard)
-        } else {
+        }
+
+        if content == nil {
             print("❓ Processing as generic content")
             content = await processGenericContent(pasteboard, types: types)
         }
@@ -427,36 +450,63 @@ public class ClipboardMonitorService {
         ))
     }
 
-    private func processImageContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
-        guard let image = NSImage(pasteboard: pasteboard) else { return nil }
-
-        // Determine the best representation
+    private func processImageContent(_ pasteboard: NSPasteboard, fileURLs: [URL]? = nil) async -> ClipboardContent? {
+        var image: NSImage?
         var imageData: Data?
         var format: ImageFormat = .png
 
-        if let pngData = pasteboard.data(forType: .png) {
-            imageData = pngData
-            format = .png
-        } else if let tiffData = image.tiffRepresentation {
-            imageData = tiffData
-            format = .tiff
+        // If file URLs provided, load image from file
+        if let fileURLs = fileURLs, let firstURL = fileURLs.first {
+            print("🖼️ Loading image from file URL: \(firstURL.path)")
+
+            // Try to load the image from the file
+            if let loadedImage = NSImage(contentsOf: firstURL) {
+                image = loadedImage
+
+                // Detect format from file extension
+                if let detectedFormat = getImageFormat(from: firstURL) {
+                    format = detectedFormat
+                    print("🖼️ Detected image format: \(format.rawValue)")
+                }
+
+                // Load the raw file data
+                if let fileData = try? Data(contentsOf: firstURL) {
+                    imageData = fileData
+                    print("🖼️ Loaded image data: \(fileData.count) bytes")
+                }
+            } else {
+                print("❌ Failed to load image from file URL")
+                return nil
+            }
+        } else {
+            // Original pasteboard-based logic
+            guard let pasteboardImage = NSImage(pasteboard: pasteboard) else { return nil }
+            image = pasteboardImage
+
+            if let pngData = pasteboard.data(forType: .png) {
+                imageData = pngData
+                format = .png
+            } else if let tiffData = image?.tiffRepresentation {
+                imageData = tiffData
+                format = .tiff
+            }
         }
 
-        guard let data = imageData else { return nil }
+        guard let finalImage = image, let data = imageData else { return nil }
 
         // Generate thumbnail
-        let thumbnailPath = await generateThumbnail(for: image)
+        let thumbnailPath = await generateThumbnail(for: finalImage)
 
         // Extract color palette
-        let colorPalette = await extractColorPalette(from: image)
+        let colorPalette = await extractColorPalette(from: finalImage)
 
         // Check for transparency
-        let hasTransparency = await checkTransparency(image: image)
+        let hasTransparency = await checkTransparency(image: finalImage)
 
         return .image(ImageContent(
             data: data,
             format: format,
-            dimensions: image.size,
+            dimensions: finalImage.size,
             thumbnailPath: thumbnailPath,
             colorPalette: colorPalette,
             hasTransparency: hasTransparency
@@ -677,6 +727,33 @@ public class ClipboardMonitorService {
     }
 
     // MARK: - Helper Methods
+
+    private func isImageFile(_ url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+
+        // Get the UTType for the file
+        guard let type = UTType(filenameExtension: url.pathExtension) else {
+            return false
+        }
+
+        // Check if it conforms to image type
+        return type.conforms(to: .image)
+    }
+
+    private func getImageFormat(from url: URL) -> ImageFormat? {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "png": return .png
+        case "jpg", "jpeg": return .jpeg
+        case "gif": return .gif
+        case "tiff", "tif": return .tiff
+        case "bmp": return .bmp
+        case "heif", "heic": return .heif
+        case "webp": return .webp
+        case "svg": return .svg
+        default: return nil
+        }
+    }
 
     private func detectLanguage(_ text: String) async -> String? {
         if #available(macOS 12.0, *) {

@@ -170,7 +170,7 @@ public struct ImageContent: Codable, Hashable, Sendable {
 }
 
 public enum ImageFormat: String, Codable, CaseIterable, Sendable {
-    case png, jpeg, gif, tiff, bmp, heif, webp
+    case png, jpeg, gif, tiff, bmp, heif, webp, svg
 }
 
 public struct FileContent: Codable, Hashable, Sendable {

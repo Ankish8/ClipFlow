@@ -178,6 +178,7 @@ public struct ItemMetadata: Codable, Hashable, Sendable {
             case .bmp: return "image/bmp"
             case .heif: return "image/heif"
             case .webp: return "image/webp"
+            case .svg: return "image/svg+xml"
             }
         case .link:
             return "text/uri-list"
@@ -203,6 +204,7 @@ public struct ItemMetadata: Codable, Hashable, Sendable {
             case .bmp: return "com.microsoft.bmp"
             case .heif: return "public.heif"
             case .webp: return "org.webmproject.webp"
+            case .svg: return "public.svg-image"
             }
         case .file:
             return "public.file-url"
