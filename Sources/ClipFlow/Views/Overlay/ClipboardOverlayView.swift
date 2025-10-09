@@ -297,6 +297,7 @@ struct ClipboardOverlayView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .focusEffectDisabled()
     }
 
 

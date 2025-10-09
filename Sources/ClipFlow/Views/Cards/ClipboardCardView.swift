@@ -7,13 +7,9 @@ struct ClipboardCardView: View {
     let index: Int
     let isSelected: Bool
     let viewModel: ClipboardViewModel
-    @State private var isHovering = false
-    @State private var hoveredButton: String? = nil
-    @State private var isDeleting = false
     @State private var cachedImagePath: String? = nil
     @State private var showCopyFeedback = false
     @State private var accentColor: Color? = nil
-    @State private var showTooltip = false
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -38,35 +34,9 @@ struct ClipboardCardView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
         )
-        .scaleEffect(isDeleting ? 0.8 : 1.0)
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
-        .offset(y: isHovering ? -1 : 0) // transform: translateY(-1px)
-        .offset(y: isDeleting ? -20 : 0)
-        .opacity(isDeleting ? 0 : 1)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
-        .shadow(
-            color: colorScheme == .light ?
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.05 : 0.0) : // rgba(0, 0, 0, 0.05)
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.3 : 0.0),
-            radius: isHovering ? 6 : 0,
-            x: 0,
-            y: isHovering ? 4 : 0
-        )
-        .shadow(
-            color: colorScheme == .light ?
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.08 : 0.0) : // rgba(0, 0, 0, 0.08)
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: isHovering ? 0.2 : 0.0),
-            radius: isHovering ? 3 : 0,
-            x: 0,
-            y: isHovering ? 1 : 0
-        )
         .animation(.easeInOut(duration: 0.2), value: isSelected)
-        .animation(.easeInOut(duration: 0.3), value: isDeleting)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
         .onDrag {
             provideDragData()
         }
@@ -85,20 +55,9 @@ struct ClipboardCardView: View {
             // Double-click to paste and hide overlay
             pasteAndHideOverlay()
         }
-        .overlay(alignment: .bottomTrailing) {
-            if isHovering && !isDeleting {
-                quickActionButtons
-                    .contentShape(Rectangle())
-                    .padding(.bottom, 44) // Position above footer (footer is ~40px + spacing)
-                    .padding(.trailing, 8) // Add right margin
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                    .onHover { hovering in
-                        // Keep the card hover state active when hovering over buttons
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            isHovering = hovering
-                        }
-                    }
-            }
+        .onTapGesture {
+            // Single-click to copy
+            copyItem()
         }
         .onAppear {
             // Create temporary file for images asynchronously to avoid blocking main thread during drag
@@ -164,22 +123,6 @@ struct ClipboardCardView: View {
                     .padding(0.5) // Inset slightly from outer border
             }
         }
-        .shadow(
-            color: colorScheme == .light ?
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.12) : // Much stronger shadow
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.4),
-            radius: 8,
-            x: 0,
-            y: 4
-        )
-        .shadow(
-            color: colorScheme == .light ?
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.08) : // Secondary shadow
-                Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.2),
-            radius: 3,
-            x: 0,
-            y: 2
-        )
     }
 
     private var cardHeader: some View {
@@ -199,24 +142,7 @@ struct ClipboardCardView: View {
                 Spacer()
 
                 // Source app icon badge
-                ZStack(alignment: .topTrailing) {
-                    appIconBadge
-
-                    // Custom tooltip overlay
-                    if showTooltip, let appName = item.source.applicationName {
-                        Text(appName)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(Color.black.opacity(0.85))
-                            )
-                            .offset(x: 0, y: -30)
-                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                    }
-                }
+                appIconBadge
             }
 
         }
@@ -328,62 +254,6 @@ struct ClipboardCardView: View {
         return formatter.string(fromByteCount: bytes)
     }
 
-    // MARK: - Quick Actions
-
-    private var quickActionButtons: some View {
-        HStack(spacing: 6) {
-            // Copy action
-            quickActionButton(icon: "doc.on.doc", action: copyItem, color: .primary)
-
-            // Delete action
-            quickActionButton(icon: "trash", action: deleteItem, color: .primary)
-
-            // Pin/Favorite action
-            quickActionButton(icon: item.isFavorite ? "star.fill" : "star", action: pinItem, color: .primary)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(colorScheme == .light ?
-                    Color(.sRGB, red: 0.98, green: 0.98, blue: 0.99, opacity: 0.96) :
-                    Color(.sRGB, red: 0.15, green: 0.15, blue: 0.16, opacity: 0.96)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(colorScheme == .light ?
-                            Color(.sRGB, red: 0.85, green: 0.87, blue: 0.9, opacity: 0.7) :
-                            Color(.sRGB, red: 0.35, green: 0.35, blue: 0.36, opacity: 0.7),
-                            lineWidth: 0.5
-                        )
-                )
-                .shadow(
-                    color: colorScheme == .light ?
-                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.08) :
-                        Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.25),
-                    radius: 3,
-                    x: 0,
-                    y: 1
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func quickActionButton(icon: String, action: @escaping () -> Void, color: Color) -> some View {
-        Button(action: {
-            // Add haptic feedback
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-            action()
-        }) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(colorScheme == .light ? color : color.opacity(0.9))
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(QuickActionButtonStyle(color: color, colorScheme: colorScheme))
-    }
-
     // MARK: - Action Methods
 
     private func copyItem() {
@@ -421,22 +291,6 @@ struct ClipboardCardView: View {
             // NOW paste into restored text field
             self.viewModel.pasteItem(self.item)
         }
-    }
-
-    private func deleteItem() {
-        // Trigger delete animation
-        withAnimation(.easeInOut(duration: 0.3)) {
-            isDeleting = true
-        }
-
-        // Perform actual delete after animation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            viewModel.deleteItem(item)
-        }
-    }
-
-    private func pinItem() {
-        viewModel.toggleFavorite(for: item)
     }
 
 
@@ -624,17 +478,6 @@ struct ClipboardCardView: View {
                                     lineWidth: 1.5
                                 )
                         )
-                        .shadow(
-                            color: Color.black.opacity(0.15),
-                            radius: 2,
-                            x: 0,
-                            y: 1
-                        )
-                        .onHover { hovering in
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                showTooltip = hovering
-                            }
-                        }
                 } else {
                     let _ = NSLog("❌ Failed to convert icon data to NSImage for: \(item.source.applicationName ?? "Unknown")")
                     // Fallback when icon data exists but conversion fails
@@ -701,34 +544,6 @@ struct ClipboardCardView: View {
 
         accentColor = extractedColor
         NSLog("🎨 Applied accent color to card for: \(appName)")
-    }
-}
-
-// Custom button style for quick action buttons
-struct QuickActionButtonStyle: ButtonStyle {
-    let color: Color
-    let colorScheme: ColorScheme
-    
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundColor(colorScheme == .light ? 
-                (configuration.isPressed ? Color.primary.opacity(0.7) : Color.primary.opacity(0.8)) :
-                (configuration.isPressed ? Color.primary.opacity(0.6) : Color.primary.opacity(0.7))
-            )
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(configuration.isPressed ? 
-                        (colorScheme == .light ? Color.primary.opacity(0.15) : Color.primary.opacity(0.25)) :
-                        (colorScheme == .light ? Color.primary.opacity(0.06) : Color.primary.opacity(0.12))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(configuration.isPressed ? Color.primary.opacity(0.4) : Color.primary.opacity(0.2), lineWidth: configuration.isPressed ? 1 : 0.5)
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 

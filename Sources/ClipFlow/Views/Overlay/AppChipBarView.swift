@@ -97,6 +97,7 @@ struct AppChipBarView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .focusEffectDisabled()
     }
 
     private func appChip(for app: AppChip) -> some View {
@@ -162,6 +163,7 @@ struct AppChipBarView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .focusEffectDisabled()
     }
 
     private var moreChip: some View {
@@ -188,6 +190,7 @@ struct AppChipBarView: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .focusEffectDisabled()
     }
 }
 
