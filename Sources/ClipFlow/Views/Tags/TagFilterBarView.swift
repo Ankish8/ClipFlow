@@ -60,6 +60,7 @@ struct TagFilterBarView: View {
                             performColorChange(tag: tag, newColor: newColor)
                         }
                     )
+                    .id("\(tag.id)-\(tag.color.rawValue)")  // Force re-render when color changes
                     .contextMenu {
                         tagContextMenu(for: tag)
                     }
@@ -249,15 +250,28 @@ struct TagFilterBarView: View {
     private func performColorChange(tag: Tag, newColor: TagColor) {
         NSLog("🎨 Changing '\(tag.name)' to \(newColor.displayName)")
 
+        // Update local state immediately for instant visual feedback
+        if let index = tags.firstIndex(where: { $0.id == tag.id }) {
+            var updatedTag = tag
+            updatedTag.update(color: newColor)
+            tags[index] = updatedTag
+            NSLog("🎨 Updated local tag color immediately")
+        }
+
+        // Then update database in background
         Task {
             var updatedTag = tag
             updatedTag.update(color: newColor)
 
             do {
                 try await TagService.shared.updateTag(updatedTag)
-                NSLog("✅ Color changed")
+                NSLog("✅ Color changed in database")
             } catch {
                 NSLog("❌ Failed to change color: \(error)")
+                // Revert on error
+                if let index = tags.firstIndex(where: { $0.id == tag.id }) {
+                    tags[index] = tag
+                }
             }
         }
     }
