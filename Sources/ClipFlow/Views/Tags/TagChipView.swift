@@ -1,5 +1,6 @@
 import SwiftUI
 import ClipFlowCore
+import UniformTypeIdentifiers
 
 /// A colored chip button representing a tag
 struct TagChipView: View {
@@ -119,18 +120,22 @@ struct TagChipView: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .dropDestination(for: String.self) { items, location in
-            NSLog("🎯 DROP: TagChipView '\(tag.name)' received \(items.count) items")
-            guard let itemIdString = items.first else {
-                NSLog("❌ DROP: No items")
+        .dropDestination(for: Data.self) { items, location in
+            NSLog("🎯 DROP: TagChipView '\(tag.name)' received \(items.count) data items")
+            guard let itemData = items.first else {
+                NSLog("❌ DROP: No data items")
                 return false
             }
-            NSLog("🎯 DROP: Item string: \(itemIdString)")
+            guard let itemIdString = String(data: itemData, encoding: .utf8) else {
+                NSLog("❌ DROP: Failed to decode data to string")
+                return false
+            }
+            NSLog("🎯 DROP: Item ID string: \(itemIdString)")
             guard let itemId = UUID(uuidString: itemIdString) else {
                 NSLog("❌ DROP: Invalid UUID: \(itemIdString)")
                 return false
             }
-            NSLog("✅ DROP: Calling onDrop for '\(tag.name)'")
+            NSLog("✅ DROP: Calling onDrop for '\(tag.name)' with item \(itemId)")
             onDrop?(itemId)
             return true
         } isTargeted: { isTargeted in

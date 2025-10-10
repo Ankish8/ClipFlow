@@ -11,6 +11,7 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
     public var timestamps: ItemTimestamps
     public var security: SecurityMetadata
     public var collectionIds: Set<UUID>
+    public var tagIds: Set<UUID>
     public var isFavorite: Bool
     public var isPinned: Bool
     public var isDeleted: Bool
@@ -23,6 +24,7 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
         timestamps: ItemTimestamps = ItemTimestamps(),
         security: SecurityMetadata = SecurityMetadata(),
         collectionIds: Set<UUID> = [],
+        tagIds: Set<UUID> = [],
         isFavorite: Bool = false,
         isPinned: Bool = false,
         isDeleted: Bool = false
@@ -34,6 +36,7 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
         self.timestamps = timestamps
         self.security = security
         self.collectionIds = collectionIds
+        self.tagIds = tagIds
         self.isFavorite = isFavorite
         self.isPinned = isPinned
         self.isDeleted = isDeleted

@@ -14,6 +14,7 @@ struct ClipboardCardView: View {
     @State private var itemTags: [Tag] = []
     @State private var allTags: [Tag] = []
     @State private var showTagMenu = false
+    @State private var showNewTagCreator = false
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -50,7 +51,19 @@ struct ClipboardCardView: View {
             NSLog("🎯 DRAG: Starting drag for item: \(item.id.uuidString)")
             let provider = NSItemProvider()
 
-            // FIRST: Register actual content for drag-to-paste functionality
+            // FIRST: Register UUID with custom type for tag assignment
+            // This is checked by TagChipView dropDestination
+            provider.registerDataRepresentation(
+                forTypeIdentifier: UTType.clipboardItemID.identifier,
+                visibility: .all
+            ) { completion in
+                let data = self.item.id.uuidString.data(using: .utf8)!
+                NSLog("🎯 DRAG: Registered UUID with custom type for tagging: \(self.item.id.uuidString)")
+                completion(data, nil)
+                return nil
+            }
+
+            // SECOND: Register actual content for drag-to-paste functionality
             switch item.content {
             case .image(_):
                 // For images, provide the pre-cached temporary file
@@ -177,18 +190,8 @@ struct ClipboardCardView: View {
                 }
             }
 
-            // SECOND: Register UUID as plain text for tag assignment
-            // This comes AFTER content registration so paste operations get actual content
-            provider.registerDataRepresentation(
-                forTypeIdentifier: UTType.plainText.identifier,
-                visibility: .all
-            ) { completion in
-                let data = self.item.id.uuidString.data(using: .utf8)!
-                NSLog("🎯 DRAG: Registered UUID for tagging: \(self.item.id.uuidString)")
-                completion(data, nil)
-                return nil
-            }
-
+            // Note: We no longer register UUID as plainText since we have custom UTType
+            // This prevents UUID from interfering with paste operations
             return provider
         }
         .simultaneousGesture(
@@ -737,9 +740,24 @@ struct ClipboardCardView: View {
                 Divider()
 
                 Button("New Tag...") {
-                    // TODO: Show inline tag creator
-                    NSLog("Create new tag")
+                    showNewTagCreator = true
                 }
+            }
+            .popover(isPresented: $showNewTagCreator) {
+                VStack(spacing: 16) {
+                    Text("Create New Tag")
+                        .font(.headline)
+
+                    InlineTagCreator { newTag in
+                        // Add the newly created tag to this item
+                        viewModel.addTagToItem(tagId: newTag.id, itemId: item.id)
+                        itemTags.append(newTag)
+                        allTags.append(newTag)
+                        showNewTagCreator = false
+                    }
+                }
+                .padding()
+                .frame(width: 280)
             }
 
             Divider()

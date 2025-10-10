@@ -5,8 +5,12 @@ struct ClipboardOverlayView: View {
     @ObservedObject var viewModel: ClipboardViewModel
     @State private var selectedIndex: Int = 0
     @State private var selectedFilter: ContentFilter = .all
-    @State private var selectedApps: Set<String> = []
+    @State private var selectedTagIds: Set<UUID> = []
     @State private var isDragging: Bool = false
+
+    // Search state - managed here for keyboard capture
+    @State private var isSearchExpanded = false
+    @State private var searchText = ""
 
     // Track if this is using a shared viewModel
     private let isSharedViewModel: Bool
@@ -53,11 +57,10 @@ struct ClipboardOverlayView: View {
             }
         }
 
-        // Apply app filtering
-        if !selectedApps.isEmpty {
+        // Apply tag filtering
+        if !selectedTagIds.isEmpty {
             items = items.filter { item in
-                guard let bundleID = item.source.applicationBundleID else { return false }
-                return selectedApps.contains(bundleID)
+                !item.tagIds.intersection(selectedTagIds).isEmpty
             }
         }
 
@@ -118,13 +121,15 @@ struct ClipboardOverlayView: View {
                     // Top spacing for vertical balance
                     Spacer().frame(height: 12)
 
-                    // Horizontal chip bar for app filtering
-                    AppChipBarView(
-                        items: viewModel.items,
-                        selectedApps: $selectedApps
+                    // Horizontal tag filter bar
+                    TagFilterBarView(
+                        viewModel: viewModel,
+                        selectedTagIds: $selectedTagIds,
+                        isSearchExpanded: $isSearchExpanded,
+                        searchText: $searchText
                     )
 
-                    // Spacing between chip bar and cards
+                    // Spacing between tag bar and cards
                     Spacer().frame(height: 20)
 
                     // Main cards container - centered and full width
@@ -192,6 +197,21 @@ struct ClipboardOverlayView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.keyboardShortcutNotification)) { _ in
             handleKeyboardInput()
+        }
+        .focusable()
+        .onKeyPress { press in
+            // Auto-expand search when user starts typing
+            if !isSearchExpanded && press.characters.count == 1 && !press.characters.isEmpty {
+                let char = press.characters
+                // Only capture alphanumeric and common punctuation
+                if char.rangeOfCharacter(from: CharacterSet.alphanumerics) != nil || char.rangeOfCharacter(from: CharacterSet.punctuationCharacters) != nil || char == " " {
+                    NSLog("🔍 Auto-expanding search with character: '\(char)'")
+                    isSearchExpanded = true
+                    searchText = char
+                    return .handled
+                }
+            }
+            return .ignored
         }
     }
 

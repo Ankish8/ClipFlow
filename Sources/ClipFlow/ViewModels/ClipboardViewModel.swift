@@ -291,4 +291,60 @@ class ClipboardViewModel: ObservableObject {
             self.itemsBackup.removeAll()
         }
     }
+
+    // MARK: - Tag Management
+
+    func addTagToItem(tagId: UUID, itemId: UUID) {
+        Task {
+            do {
+                try await ClipFlowBackend.TagService.shared.tagItem(tagId: tagId, itemId: itemId)
+
+                // Update local item
+                if let index = items.firstIndex(where: { $0.id == itemId }) {
+                    var updatedItem = items[index]
+                    updatedItem.tagIds.insert(tagId)
+                    items[index] = updatedItem
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func removeTagFromItem(tagId: UUID, itemId: UUID) {
+        Task {
+            do {
+                try await ClipFlowBackend.TagService.shared.untagItem(tagId: tagId, itemId: itemId)
+
+                // Update local item
+                if let index = items.firstIndex(where: { $0.id == itemId }) {
+                    var updatedItem = items[index]
+                    updatedItem.tagIds.remove(tagId)
+                    items[index] = updatedItem
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func getTagsForItem(itemId: UUID) async -> [Tag] {
+        do {
+            return try await ClipFlowBackend.TagService.shared.getTagsForItem(itemId: itemId)
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
+    // MARK: - Tag Filtering
+
+    func filteredItems(byTags tagIds: Set<UUID>) -> [ClipboardItem] {
+        guard !tagIds.isEmpty else { return items }
+
+        return items.filter { item in
+            // Item must have at least one of the selected tags
+            !item.tagIds.intersection(tagIds).isEmpty
+        }
+    }
 }

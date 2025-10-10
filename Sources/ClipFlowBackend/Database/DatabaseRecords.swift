@@ -15,6 +15,7 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
     var timestamps: String
     var security: String
     var collectionIds: String?
+    var tagIds: String?
     var isFavorite: Bool
     var isPinned: Bool
     var isDeleted: Bool
@@ -37,6 +38,7 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
         timestamps = try row["timestamps"]
         security = try row["security"]
         collectionIds = row["collection_ids"]
+        tagIds = row["tag_ids"]
         isFavorite = try row["is_favorite"]
         isPinned = try row["is_pinned"]
         isDeleted = try row["is_deleted"]
@@ -58,6 +60,7 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
         container["timestamps"] = timestamps
         container["security"] = security
         container["collection_ids"] = collectionIds
+        container["tag_ids"] = tagIds
         container["is_favorite"] = isFavorite
         container["is_pinned"] = isPinned
         container["is_deleted"] = isDeleted
@@ -78,6 +81,7 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
         self.timestamps = (try? JSONEncoder().encode(item.timestamps).base64EncodedString()) ?? ""
         self.security = (try? JSONEncoder().encode(item.security).base64EncodedString()) ?? ""
         self.collectionIds = item.collectionIds.isEmpty ? nil : (try? JSONEncoder().encode(Array(item.collectionIds)).base64EncodedString())
+        self.tagIds = item.tagIds.isEmpty ? nil : (try? JSONEncoder().encode(Array(item.tagIds)).base64EncodedString())
         self.isFavorite = item.isFavorite
         self.isPinned = item.isPinned
         self.isDeleted = item.isDeleted
@@ -126,6 +130,15 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
             itemCollectionIds = []
         }
 
+        let itemTagIds: Set<UUID>
+        if let tagIdsString = tagIds,
+           let tagIdsData = Data(base64Encoded: tagIdsString),
+           let decodedTagIds = try? decoder.decode([UUID].self, from: tagIdsData) {
+            itemTagIds = Set(decodedTagIds)
+        } else {
+            itemTagIds = []
+        }
+
         guard let uuid = UUID(uuidString: id) else {
             throw DatabaseError.corruptedData("Invalid UUID")
         }
@@ -138,6 +151,7 @@ struct ClipboardItemRecord: Codable, FetchableRecord, MutablePersistableRecord {
             timestamps: itemTimestamps,
             security: itemSecurity,
             collectionIds: itemCollectionIds,
+            tagIds: itemTagIds,
             isFavorite: isFavorite,
             isPinned: isPinned,
             isDeleted: isDeleted
@@ -289,6 +303,72 @@ struct AutomationRuleRecord: Codable, FetchableRecord, MutablePersistableRecord 
             conditions: [],
             actions: [],
             isEnabled: isEnabled
+        )
+    }
+}
+
+// MARK: - TagRecord
+
+struct TagRecord: Codable, FetchableRecord, MutablePersistableRecord {
+    var id: String
+    var name: String
+    var color: String
+    var icon: String  // Required by existing schema
+    var description: String?  // Optional in existing schema
+    var usageCount: Int  // Required by existing schema
+    var createdAt: TimeInterval
+    var modifiedAt: TimeInterval
+
+    static let databaseTableName = "tags"
+
+    init(row: Row) throws {
+        id = try row["id"]
+        name = try row["name"]
+        color = try row["color"]
+        icon = try row["icon"]
+        description = row["description"]
+        usageCount = try row["usage_count"]
+        createdAt = try row["created_at"]
+        modifiedAt = try row["modified_at"]
+    }
+
+    func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = id
+        container["name"] = name
+        container["color"] = color
+        container["icon"] = icon
+        container["description"] = description
+        container["usage_count"] = usageCount
+        container["created_at"] = createdAt
+        container["modified_at"] = modifiedAt
+    }
+
+    init(from tag: Tag) {
+        self.id = tag.id.uuidString
+        self.name = tag.name
+        self.color = tag.color.rawValue
+        self.icon = "tag"  // Default icon value
+        self.description = nil
+        self.usageCount = 0
+        self.createdAt = tag.createdAt.timeIntervalSince1970
+        self.modifiedAt = tag.modifiedAt.timeIntervalSince1970
+    }
+
+    func toTag() throws -> Tag {
+        guard let uuid = UUID(uuidString: id) else {
+            throw DatabaseError.corruptedData("Invalid UUID for tag")
+        }
+
+        guard let tagColor = TagColor(rawValue: color) else {
+            throw DatabaseError.corruptedData("Invalid tag color: \(color)")
+        }
+
+        return Tag(
+            id: uuid,
+            name: name,
+            color: tagColor,
+            createdAt: Date(timeIntervalSince1970: createdAt),
+            modifiedAt: Date(timeIntervalSince1970: modifiedAt)
         )
     }
 }
