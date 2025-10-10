@@ -151,6 +151,37 @@ public class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v1.2") { db in
+            // Tags table
+            try db.create(table: "tags") { t in
+                t.primaryKey("id", .text)
+                t.column("name", .text).notNull()
+                t.column("color", .text).notNull()
+                t.column("created_at", .integer).notNull()
+                t.column("modified_at", .integer).notNull()
+            }
+
+            // Item-Tags junction table (many-to-many)
+            try db.create(table: "item_tags") { t in
+                t.column("item_id", .text).notNull()
+                    .references("clipboard_items", onDelete: .cascade)
+                t.column("tag_id", .text).notNull()
+                    .references("tags", onDelete: .cascade)
+                t.column("added_at", .integer).notNull()
+                t.primaryKey(["item_id", "tag_id"])
+            }
+
+            // Add tag_ids column to clipboard_items for denormalized access
+            try db.alter(table: "clipboard_items") { t in
+                t.add(column: "tag_ids", .text)
+            }
+
+            // Performance indexes for tags
+            try db.create(index: "idx_tags_name", on: "tags", columns: ["name"])
+            try db.create(index: "idx_item_tags_item", on: "item_tags", columns: ["item_id"])
+            try db.create(index: "idx_item_tags_tag", on: "item_tags", columns: ["tag_id"])
+        }
+
         return migrator
     }
 
@@ -415,6 +446,157 @@ public class DatabaseManager {
     public func vacuumDatabase() async throws {
         try await write { db in
             try db.execute(sql: "VACUUM")
+        }
+    }
+
+    // MARK: - Tags
+
+    public func saveTag(_ tag: Tag) async throws {
+        try await write { db in
+            var record = TagRecord(from: tag)
+            try record.insert(db)
+        }
+    }
+
+    public func updateTag(_ tag: Tag) async throws {
+        NSLog("📝 DatabaseManager: Updating tag \(tag.id) - '\(tag.name)'")
+        try await write { db in
+            // Use raw SQL update to avoid GRDB record issues
+            try db.execute(sql: """
+                UPDATE tags
+                SET name = ?, color = ?, modified_at = ?
+                WHERE id = ?
+            """, arguments: [
+                tag.name,
+                tag.color.rawValue,
+                tag.modifiedAt.timeIntervalSince1970,
+                tag.id.uuidString
+            ])
+
+            NSLog("✅ DatabaseManager: Successfully updated tag '\(tag.name)' in database")
+        }
+    }
+
+    public func deleteTag(id: UUID) async throws {
+        try await write { db in
+            let tagIdString = id.uuidString
+
+            // Check if item_tags table exists (migration may not have run yet)
+            let tableExists = try Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type='table' AND name='item_tags'
+            """) ?? false
+
+            if tableExists {
+                // Get all items with this tag
+                let itemIds = try String.fetchAll(db, sql: """
+                    SELECT item_id FROM item_tags WHERE tag_id = ?
+                """, arguments: [tagIdString])
+
+                // Delete the tag (will cascade to item_tags)
+                try db.execute(sql: "DELETE FROM tags WHERE id = ?", arguments: [tagIdString])
+
+                // Update denormalized tag_ids for affected items
+                for itemId in itemIds {
+                    if let item = try ClipboardItemRecord.fetchOne(db, key: itemId) {
+                        var clipboardItem = try item.toClipboardItem()
+                        clipboardItem.tagIds.remove(id)
+                        let updatedRecord = ClipboardItemRecord(from: clipboardItem)
+                        try updatedRecord.update(db)
+                    }
+                }
+            } else {
+                // Table doesn't exist yet, just delete the tag
+                NSLog("⚠️ item_tags table doesn't exist, deleting tag without junction table cleanup")
+                try db.execute(sql: "DELETE FROM tags WHERE id = ?", arguments: [tagIdString])
+            }
+
+            NSLog("✅ DatabaseManager: Successfully deleted tag \(tagIdString)")
+        }
+    }
+
+    public func getTags() async throws -> [Tag] {
+        try await read { db in
+            let records = try TagRecord.fetchAll(db)
+            return try records.map { try $0.toTag() }
+        }
+    }
+
+    public func getTag(id: UUID) async throws -> Tag? {
+        try await read { db in
+            if let record = try TagRecord.fetchOne(db, key: id.uuidString) {
+                return try record.toTag()
+            }
+            return nil
+        }
+    }
+
+    // MARK: - Tag-Item Relationships
+
+    public func addTagToItem(tagId: UUID, itemId: UUID) async throws {
+        try await write { db in
+            // Add to junction table
+            try db.execute(sql: """
+                INSERT OR IGNORE INTO item_tags (item_id, tag_id, added_at)
+                VALUES (?, ?, ?)
+            """, arguments: [itemId.uuidString, tagId.uuidString, Date().timeIntervalSince1970])
+
+            // Update denormalized tag_ids in clipboard_items
+            if let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
+                var clipboardItem = try item.toClipboardItem()
+                clipboardItem.tagIds.insert(tagId)
+                let updatedRecord = ClipboardItemRecord(from: clipboardItem)
+                try updatedRecord.update(db)
+            }
+        }
+    }
+
+    public func removeTagFromItem(tagId: UUID, itemId: UUID) async throws {
+        try await write { db in
+            // Remove from junction table
+            try db.execute(sql: """
+                DELETE FROM item_tags WHERE item_id = ? AND tag_id = ?
+            """, arguments: [itemId.uuidString, tagId.uuidString])
+
+            // Update denormalized tag_ids in clipboard_items
+            if let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
+                var clipboardItem = try item.toClipboardItem()
+                clipboardItem.tagIds.remove(tagId)
+                let updatedRecord = ClipboardItemRecord(from: clipboardItem)
+                try updatedRecord.update(db)
+            }
+        }
+    }
+
+    public func getTagsForItem(itemId: UUID) async throws -> [Tag] {
+        try await read { db in
+            let tagIds = try String.fetchAll(db, sql: """
+                SELECT tag_id FROM item_tags WHERE item_id = ?
+            """, arguments: [itemId.uuidString])
+
+            var tags: [Tag] = []
+            for tagIdString in tagIds {
+                if let record = try TagRecord.fetchOne(db, key: tagIdString) {
+                    tags.append(try record.toTag())
+                }
+            }
+            return tags
+        }
+    }
+
+    public func getItemsForTag(tagId: UUID) async throws -> [ClipboardItem] {
+        try await read { db in
+            let itemIds = try String.fetchAll(db, sql: """
+                SELECT item_id FROM item_tags WHERE tag_id = ?
+            """, arguments: [tagId.uuidString])
+
+            var items: [ClipboardItem] = []
+            for itemIdString in itemIds {
+                if let record = try ClipboardItemRecord.fetchOne(db, key: itemIdString) {
+                    items.append(try record.toClipboardItem())
+                }
+            }
+            return items
         }
     }
 }
