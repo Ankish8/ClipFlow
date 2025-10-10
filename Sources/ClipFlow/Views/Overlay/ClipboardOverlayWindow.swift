@@ -59,12 +59,23 @@ class ClipboardOverlayWindow: NSWindow {
                 self.lastInsideClickTime = Date()
                 NSLog("👆 Local: Click inside overlay at \(clickLocation) - keeping open")
                 return event
-            } else {
-                // Click is outside window but within our app - close overlay
-                NSLog("👆 Local: Click outside overlay at \(clickLocation) - closing")
-                NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
-                return event
             }
+
+            // Check if click is in any child window (like popovers, menus, etc.)
+            if let childWindows = self.childWindows, !childWindows.isEmpty {
+                for childWindow in childWindows {
+                    if childWindow.isVisible && childWindow.frame.contains(clickLocation) {
+                        self.lastInsideClickTime = Date()
+                        NSLog("👆 Local: Click in popover/child window at \(clickLocation) - keeping open")
+                        return event
+                    }
+                }
+            }
+
+            // Click is outside window and not in child windows - close overlay
+            NSLog("👆 Local: Click outside overlay at \(clickLocation) - closing")
+            NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+            return event
         }
 
         // Global event monitor - handles clicks in other apps (desktop, other applications)
