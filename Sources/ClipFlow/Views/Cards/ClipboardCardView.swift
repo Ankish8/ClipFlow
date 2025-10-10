@@ -1,5 +1,6 @@
 import SwiftUI
 import ClipFlowCore
+import ClipFlowBackend
 import UniformTypeIdentifiers
 
 struct ClipboardCardView: View {
@@ -10,6 +11,9 @@ struct ClipboardCardView: View {
     @State private var cachedImagePath: String? = nil
     @State private var showCopyFeedback = false
     @State private var accentColor: Color? = nil
+    @State private var itemTags: [Tag] = []
+    @State private var allTags: [Tag] = []
+    @State private var showTagMenu = false
 
     private var contentTypeInfo: ContentTypeInfo {
         ContentTypeInfo.from(item.content)
@@ -19,6 +23,11 @@ struct ClipboardCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Card header with type badge and index
             cardHeader
+
+            // Tag indicators (if any tags)
+            if !itemTags.isEmpty {
+                tagIndicators
+            }
 
             // Content preview
             contentPreview
@@ -38,17 +47,154 @@ struct ClipboardCardView: View {
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
         .onDrag {
-            provideDragData()
+            NSLog("🎯 DRAG: Starting drag for item: \(item.id.uuidString)")
+            let provider = NSItemProvider()
+
+            // FIRST: Register actual content for drag-to-paste functionality
+            switch item.content {
+            case .image(_):
+                // For images, provide the pre-cached temporary file
+                if let cachedPath = cachedImagePath {
+                    let fileURL = URL(fileURLWithPath: cachedPath)
+                    provider.registerFileRepresentation(
+                        forTypeIdentifier: UTType.png.identifier,
+                        fileOptions: [],
+                        visibility: .all
+                    ) { completion in
+                        completion(fileURL, false, nil)
+                        return Progress()
+                    }
+                    NSLog("🎯 DRAG: Registered image file: \(fileURL.lastPathComponent)")
+                }
+
+            case .text(let textContent):
+                // For text, provide string content
+                if let data = textContent.plainText.data(using: .utf8) {
+                    provider.registerDataRepresentation(
+                        forTypeIdentifier: UTType.utf8PlainText.identifier,
+                        visibility: .all
+                    ) { completion in
+                        completion(data, nil)
+                        return nil
+                    }
+                    NSLog("🎯 DRAG: Registered text content (\(textContent.plainText.count) chars)")
+                }
+
+            case .richText(let richContent):
+                // For rich text, provide plain text fallback
+                if let data = richContent.plainTextFallback.data(using: .utf8) {
+                    provider.registerDataRepresentation(
+                        forTypeIdentifier: UTType.utf8PlainText.identifier,
+                        visibility: .all
+                    ) { completion in
+                        completion(data, nil)
+                        return nil
+                    }
+                    NSLog("🎯 DRAG: Registered rich text content")
+                }
+
+            case .file(let fileContent):
+                // For files, provide file URLs
+                for fileURL in fileContent.urls {
+                    provider.registerFileRepresentation(
+                        forTypeIdentifier: UTType.fileURL.identifier,
+                        fileOptions: .openInPlace,
+                        visibility: .all
+                    ) { completion in
+                        completion(fileURL, true, nil)
+                        return Progress()
+                    }
+                }
+                NSLog("🎯 DRAG: Registered \(fileContent.urls.count) file(s)")
+
+            case .link(let linkContent):
+                // For links, provide URL string
+                if let data = linkContent.url.absoluteString.data(using: .utf8) {
+                    provider.registerDataRepresentation(
+                        forTypeIdentifier: UTType.url.identifier,
+                        visibility: .all
+                    ) { completion in
+                        completion(data, nil)
+                        return nil
+                    }
+                    NSLog("🎯 DRAG: Registered link URL")
+                }
+
+            case .code(let codeContent):
+                // For code, provide string content
+                if let data = codeContent.code.data(using: .utf8) {
+                    provider.registerDataRepresentation(
+                        forTypeIdentifier: UTType.utf8PlainText.identifier,
+                        visibility: .all
+                    ) { completion in
+                        completion(data, nil)
+                        return nil
+                    }
+                    NSLog("🎯 DRAG: Registered code content")
+                }
+
+            case .color(let colorContent):
+                // For colors, provide hex string
+                if let data = colorContent.hexValue.data(using: .utf8) {
+                    provider.registerDataRepresentation(
+                        forTypeIdentifier: UTType.utf8PlainText.identifier,
+                        visibility: .all
+                    ) { completion in
+                        completion(data, nil)
+                        return nil
+                    }
+                    NSLog("🎯 DRAG: Registered color hex value")
+                }
+
+            case .snippet(let snippetContent):
+                // For snippets, provide string content
+                if let data = snippetContent.content.data(using: .utf8) {
+                    provider.registerDataRepresentation(
+                        forTypeIdentifier: UTType.utf8PlainText.identifier,
+                        visibility: .all
+                    ) { completion in
+                        completion(data, nil)
+                        return nil
+                    }
+                    NSLog("🎯 DRAG: Registered snippet content")
+                }
+
+            case .multiple(let multiContent):
+                // For multiple items, provide the first text-like content
+                for subItem in multiContent.items {
+                    if case .text(let textContent) = subItem,
+                       let data = textContent.plainText.data(using: .utf8) {
+                        provider.registerDataRepresentation(
+                            forTypeIdentifier: UTType.utf8PlainText.identifier,
+                            visibility: .all
+                        ) { completion in
+                            completion(data, nil)
+                            return nil
+                        }
+                        NSLog("🎯 DRAG: Registered multi-item content")
+                        break
+                    }
+                }
+            }
+
+            // SECOND: Register UUID as plain text for tag assignment
+            // This comes AFTER content registration so paste operations get actual content
+            provider.registerDataRepresentation(
+                forTypeIdentifier: UTType.plainText.identifier,
+                visibility: .all
+            ) { completion in
+                let data = self.item.id.uuidString.data(using: .utf8)!
+                NSLog("🎯 DRAG: Registered UUID for tagging: \(self.item.id.uuidString)")
+                completion(data, nil)
+                return nil
+            }
+
+            return provider
         }
         .simultaneousGesture(
-            DragGesture(minimumDistance: 5)
-                .onChanged { _ in
-                    NotificationCenter.default.post(name: .startDragging, object: nil)
-                }
+            LongPressGesture(minimumDuration: 0.3)
                 .onEnded { _ in
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        NotificationCenter.default.post(name: .stopDragging, object: nil)
-                    }
+                    // Alternative drag gesture for traditional drag-and-drop
                 }
         )
         .onTapGesture(count: 2) {
@@ -59,7 +205,11 @@ struct ClipboardCardView: View {
             // Single-click to copy
             copyItem()
         }
+        .contextMenu {
+            cardContextMenu
+        }
         .onAppear {
+            loadTags()
             // Create temporary file for images asynchronously to avoid blocking main thread during drag
             if case .image(let imageContent) = item.content {
                 Task.detached(priority: .utility) {
@@ -296,6 +446,12 @@ struct ClipboardCardView: View {
 
     // MARK: - Drag and Drop Support
 
+    /// Provides NSItemProvider for tagging via drag-and-drop
+    private func provideDragDataForTagging() -> NSItemProvider {
+        // For tagging, provide the item ID as a string
+        return NSItemProvider(object: item.id.uuidString as NSString)
+    }
+
     /// Provides NSItemProvider for drag-and-drop with proper file handling
     private func provideDragData() -> NSItemProvider {
         switch item.content {
@@ -500,6 +656,122 @@ struct ClipboardCardView: View {
                     )
                     .frame(width: 22, height: 22)
             }
+        }
+    }
+
+    // MARK: - Tag Indicators
+
+    private var tagIndicators: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(itemTags.prefix(2)) { tag in
+                    let (r, g, b) = tag.color.rgbComponents
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color(red: r, green: g, blue: b))
+                            .frame(width: 8, height: 8)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
+                            )
+
+                        Text(tag.name)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.primary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: r, green: g, blue: b).opacity(0.15))
+                    )
+                }
+
+                if itemTags.count > 2 {
+                    Text("+\(itemTags.count - 2)")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+    }
+
+    // MARK: - Context Menu
+
+    private var cardContextMenu: some View {
+        Group {
+            Button("Copy") {
+                copyItem()
+            }
+
+            Button("Paste & Close") {
+                pasteAndHideOverlay()
+            }
+
+            Divider()
+
+            // Tag submenu
+            Menu("Tag") {
+                ForEach(allTags) { tag in
+                    Button(action: {
+                        toggleTag(tag)
+                    }) {
+                        HStack {
+                            if itemTags.contains(where: { $0.id == tag.id }) {
+                                Image(systemName: "checkmark")
+                            }
+                            Text(tag.name)
+                            Spacer()
+                            let (r, g, b) = tag.color.rgbComponents
+                            Circle()
+                                .fill(Color(red: r, green: g, blue: b))
+                                .frame(width: 10, height: 10)
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button("New Tag...") {
+                    // TODO: Show inline tag creator
+                    NSLog("Create new tag")
+                }
+            }
+
+            Divider()
+
+            Button("Delete", role: .destructive) {
+                viewModel.deleteItem(item)
+            }
+        }
+    }
+
+    // MARK: - Tag Management
+
+    private func loadTags() {
+        allTags = TagService.shared.getAllTags()
+
+        Task {
+            let tags = await viewModel.getTagsForItem(itemId: item.id)
+            await MainActor.run {
+                itemTags = tags
+            }
+        }
+    }
+
+    private func toggleTag(_ tag: Tag) {
+        if itemTags.contains(where: { $0.id == tag.id }) {
+            // Remove tag
+            viewModel.removeTagFromItem(tagId: tag.id, itemId: item.id)
+            itemTags.removeAll { $0.id == tag.id }
+        } else {
+            // Add tag
+            viewModel.addTagToItem(tagId: tag.id, itemId: item.id)
+            itemTags.append(tag)
         }
     }
 
