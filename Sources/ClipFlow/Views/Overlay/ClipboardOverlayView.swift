@@ -15,11 +15,6 @@ struct ClipboardOverlayView: View {
     // PERFORMANCE: Avoid Array(enumerated()) allocation on every render
     @State private var enumeratedFilteredItems: [(offset: Int, element: ClipboardItem)] = []
 
-    // Glass compositor: a perpetual animation keeps SwiftUI's render loop at 60fps,
-    // which drives TimelineView(.animation) to continuously re-sample glassEffect.
-    // Without an active animation the schedule drops to ~0fps and glass freezes.
-    @State private var glassAnimationPhase: Double = 0
-
     // Default initializer creates its own viewModel (for standalone use)
     init() {
         let vm = ClipboardViewModel()
@@ -48,23 +43,10 @@ struct ClipboardOverlayView: View {
     }
 
     var body: some View {
-        // TimelineView(.animation) fires at display refresh rate while animations run.
-        // The perpetual glassAnimationPhase animation (started in onAppear below) keeps
-        // the schedule active at 60fps indefinitely, so glassEffect re-samples every frame.
-        TimelineView(.animation) { _ in
-            overlayContent
-                // Imperceptible opacity change tied to the perpetual animation.
-                // SwiftUI sees genuinely different output each frame and re-renders
-                // overlayContent including its glassEffect layer.
-                .opacity(1.0 - glassAnimationPhase * 0.000001)
-        }
-        .onAppear {
-            // Linear animation over 1,000,000 s ≈ 11 days: effectively infinite.
-            // Total opacity change: 0.000001 — completely invisible.
-            withAnimation(.linear(duration: 1_000_000).repeatForever(autoreverses: false)) {
-                glassAnimationPhase = 1.0
-            }
-        }
+        // Glass refresh is handled at the NSView level by ClipboardOverlayWindow's
+        // compositorTimer (needsDisplay = true at 60fps), which updates Core Animation
+        // compositing without forcing SwiftUI view body re-evaluation.
+        overlayContent
     }
 
     @ViewBuilder
