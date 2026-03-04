@@ -18,8 +18,10 @@ struct ClipboardCardView: View {
     @State private var showNewTagCreator = false
     @State private var showRenameSheet = false
     @State private var renameText = ""
-    @State private var editWindow: NSWindow? = nil
-    @State private var previewWindow: NSWindow? = nil
+    // Static store — windows survive overlay dismiss/reshow cycles.
+    // @State would be lost when the card view is recreated after overlay hides.
+    private static var editWindowStore:    [UUID: NSWindow] = [:]
+    private static var previewWindowStore: [UUID: NSWindow] = [:]
     @State private var tagTintColor: Color = .clear
     @State private var isHoveringHeader = false
 
@@ -86,7 +88,8 @@ struct ClipboardCardView: View {
                 item: item,
                 nsImage: cachedNSImage,
                 fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) },
-                dragThumbnail: dragThumbnail
+                dragThumbnail: dragThumbnail,
+                isHoveringHeader: $isHoveringHeader
             )
         }
         .onTapGesture(count: 2) {
@@ -180,18 +183,21 @@ struct ClipboardCardView: View {
                     .padding(.vertical, 3)
                     .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
-                // Pin button — always visible when pinned, revealed on hover
+                // Pin button — shown when pinned or when hovering the header.
+                // isHoveringHeader is driven by CardDragView's NSTrackingArea (not .onHover)
+                // because the AppKit overlay intercepts all hit-tests.
                 if item.isPinned || isHoveringHeader {
                     Button {
                         viewModel.setPinned(!item.isPinned, for: item)
                     } label: {
                         Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(item.isPinned ? Color.accentColor : .secondary)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(item.isPinned ? Color.white : .secondary)
                             .rotationEffect(.degrees(item.isPinned ? 45 : 0))
                     }
                     .buttonStyle(.plain)
                     .transition(.opacity.combined(with: .scale(scale: 0.7)))
+                    .animation(.easeInOut(duration: 0.15), value: isHoveringHeader)
                 }
 
                 Spacer()
@@ -202,7 +208,6 @@ struct ClipboardCardView: View {
             .padding(.horizontal, 14)
             .padding(.top, 10)
             .padding(.bottom, 10)
-            .onHover { isHoveringHeader = $0 }
 
             Divider()
         }
@@ -526,71 +531,84 @@ struct ClipboardCardView: View {
 
     private func openEditWindow() {
         guard case .text(let c) = item.content else { return }
-        editWindow?.close()
+        let id = item.id
+        Self.editWindowStore[id]?.close()
         let capturedItem = item
         let view = EditWindowView(text: c.plainText) { savedText in
             viewModel.updateItemText(capturedItem, newText: savedText)
-            editWindow?.close()
-            editWindow = nil
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
         } onCancel: {
-            editWindow?.close()
-            editWindow = nil
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
         }
-        let controller = NSHostingController(rootView: view)
-        let win = NSWindow(contentViewController: controller)
-        win.title = "Edit Item"
-        win.styleMask = NSWindow.StyleMask([.titled, .closable])
-        win.setContentSize(NSSize(width: 560, height: 380))
-        win.center()
-        win.isReleasedWhenClosed = false
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        editWindow = win
+        let win = makeStandaloneWindow(NSHostingController(rootView: view),
+                                       title: "Edit Item", size: NSSize(width: 560, height: 380))
+        Self.editWindowStore[id] = win
+        showStandaloneWindow(win)
     }
 
     private func openLinkEditWindow() {
         guard case .link(let c) = item.content else { return }
-        editWindow?.close()
+        let id = item.id
+        Self.editWindowStore[id]?.close()
         let capturedItem = item
         let view = EditLinkWindowView(urlString: c.url.absoluteString, title: c.title ?? "") { newURL, newTitle in
             viewModel.updateItemLink(capturedItem, newURLString: newURL, newTitle: newTitle.isEmpty ? nil : newTitle)
-            editWindow?.close()
-            editWindow = nil
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
         } onCancel: {
-            editWindow?.close()
-            editWindow = nil
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
         }
-        let controller = NSHostingController(rootView: view)
-        let win = NSWindow(contentViewController: controller)
-        win.title = "Edit Link"
-        win.styleMask = NSWindow.StyleMask([.titled, .closable])
-        win.setContentSize(NSSize(width: 480, height: 200))
-        win.center()
-        win.isReleasedWhenClosed = false
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        editWindow = win
+        let win = makeStandaloneWindow(NSHostingController(rootView: view),
+                                       title: "Edit Link", size: NSSize(width: 480, height: 200))
+        Self.editWindowStore[id] = win
+        showStandaloneWindow(win)
     }
 
     private func openPreviewWindow() {
-        previewWindow?.close()
+        let id = item.id
+        Self.previewWindowStore[id]?.close()
         let capturedItem = item
         let capturedVM = viewModel
         let title = viewModel.customName(for: item.id) ?? contentTypeInfo.name
         let view = PreviewWindowView(item: capturedItem, viewModel: capturedVM) {
-            previewWindow?.close()
-            previewWindow = nil
+            Self.previewWindowStore[id]?.close()
+            Self.previewWindowStore.removeValue(forKey: id)
         }
-        let controller = NSHostingController(rootView: view)
+        let win = makeStandaloneWindow(NSHostingController(rootView: view),
+                                       title: title, size: NSSize(width: 620, height: 520),
+                                       resizable: true)
+        Self.previewWindowStore[id] = win
+        showStandaloneWindow(win)
+    }
+
+    /// Build a centered, key-able window suitable for edit/preview content.
+    private func makeStandaloneWindow<V: View>(_ controller: NSHostingController<V>,
+                                               title: String,
+                                               size: NSSize,
+                                               resizable: Bool = false) -> NSWindow {
+        var mask: NSWindow.StyleMask = [.titled, .closable]
+        if resizable { mask.insert(.resizable) }
         let win = NSWindow(contentViewController: controller)
         win.title = title
-        win.styleMask = NSWindow.StyleMask([.titled, .closable, .resizable])
-        win.setContentSize(NSSize(width: 620, height: 520))
+        win.styleMask = mask
+        win.setContentSize(size)
         win.center()
         win.isReleasedWhenClosed = false
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        previewWindow = win
+        return win
+    }
+
+    /// Dismiss the overlay then show the window — prevents overlay key-event monitors
+    /// from intercepting keystrokes typed in the standalone window.
+    private func showStandaloneWindow(_ win: NSWindow) {
+        NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            win.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     // MARK: - Rename Sheet
@@ -616,6 +634,7 @@ struct ClipboardCardView: View {
                     showRenameSheet = false
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return)
             }
         }
         .padding(20)
@@ -923,18 +942,26 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
     let nsImage: NSImage?       // Pre-decoded image; nil for non-image cards
     let fileURL: URL?           // Pre-written temp file; nil for non-image cards
     let dragThumbnail: NSImage? // Full card snapshot via ImageRenderer
+    @Binding var isHoveringHeader: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> CardDragView {
         let v = CardDragView()
         v.coordinator = context.coordinator
+        v.onHeaderHoverChanged = { hovering in
+            // Dispatch to avoid SwiftUI state mutation during view update
+            DispatchQueue.main.async { context.coordinator.parent.isHoveringHeader = hovering }
+        }
         v.autoresizingMask = [.width, .height]
         return v
     }
 
     func updateNSView(_ v: CardDragView, context: Context) {
         context.coordinator.parent = self
+        v.onHeaderHoverChanged = { hovering in
+            DispatchQueue.main.async { context.coordinator.parent.isHoveringHeader = hovering }
+        }
         // Guarantee drag view is the frontmost sibling in AppKit's hit-test order.
         // glassEffect may insert NSGlassEffectView siblings after our view is created,
         // shadowing it for certain content regions (notably decoded image areas).
@@ -959,8 +986,35 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
     final class CardDragView: NSView {
         var coordinator: Coordinator?
+        var onHeaderHoverChanged: ((Bool) -> Void)?
         private var mouseDownPoint: NSPoint = .zero
         private var dragStarted = false
+
+        // Approximate header height in points (top padding + badge row + bottom padding + divider)
+        private let headerPt: CGFloat = 52
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            // Remove old tracking areas and reinstall after bounds change
+            for ta in trackingAreas { removeTrackingArea(ta) }
+            addTrackingArea(NSTrackingArea(
+                rect: bounds,
+                options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways],
+                owner: self, userInfo: nil))
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            let p = convert(event.locationInWindow, from: nil)
+            // In unflipped NSView coords, origin is bottom-left.
+            // Header is visually at the TOP, so y ≥ bounds.height - headerPt.
+            onHeaderHoverChanged?(p.y >= bounds.height - headerPt)
+            super.mouseMoved(with: event)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            onHeaderHoverChanged?(false)
+            super.mouseExited(with: event)
+        }
 
         override func viewDidMoveToSuperview() {
             super.viewDidMoveToSuperview()
