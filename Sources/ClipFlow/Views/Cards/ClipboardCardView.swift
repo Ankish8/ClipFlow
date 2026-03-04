@@ -30,6 +30,9 @@ struct ClipboardCardView: View {
     // PERFORMANCE: Cache metadata text — String.count is O(n) in Swift (Unicode traversal)
     @State private var cachedMetadata = ""
 
+    // Drag thumbnail: full card rendered via ImageRenderer, used as NSDraggingItem preview
+    @State private var dragThumbnail: NSImage? = nil
+
     init(item: ClipboardItem, index: Int, isSelected: Bool, viewModel: ClipboardViewModel) {
         self.item = item
         self.index = index
@@ -75,7 +78,8 @@ struct ClipboardCardView: View {
             AppKitCardDragOverlay(
                 item: item,
                 nsImage: cachedNSImage,
-                fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) }
+                fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) },
+                dragThumbnail: dragThumbnail
             )
         }
         .onTapGesture(count: 2) {
@@ -110,6 +114,9 @@ struct ClipboardCardView: View {
                 }
             }
 
+            // Build initial drag thumbnail (image cards show placeholder until decode below)
+            buildDragThumbnail()
+
             // Decode NSImage and write temp file — both needed before the user drags.
             // .utility priority avoids saturating CPU threads when many image cards appear.
             if case .image(let imageContent) = item.content {
@@ -120,6 +127,8 @@ struct ClipboardCardView: View {
                     await MainActor.run {
                         cachedNSImage = nsImage
                         if let tempPath { cachedImagePath = tempPath }
+                        // Re-render thumbnail now that the image is decoded
+                        buildDragThumbnail()
                     }
                 }
             }
@@ -131,6 +140,16 @@ struct ClipboardCardView: View {
     }
 
     @Environment(\.colorScheme) private var colorScheme
+
+    /// Renders the full card as a bitmap via ImageRenderer (main thread only).
+    /// Called on appear and re-called after image decode for image cards.
+    private func buildDragThumbnail() {
+        let preview = DragPreviewCard(item: item, nsImage: cachedNSImage)
+            .environment(\.colorScheme, colorScheme)
+        let renderer = ImageRenderer(content: preview)
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        dragThumbnail = renderer.nsImage
+    }
 
 
     
@@ -455,6 +474,153 @@ struct ClipboardCardView: View {
     }
 }
 
+// MARK: - Drag Preview Card
+
+/// Synchronous card replica used as the NSDraggingItem thumbnail.
+/// Rendered via ImageRenderer (no window required) so it uses solid fills
+/// instead of .glassEffect — glass requires a live compositor backdrop.
+private struct DragPreviewCard: View {
+    let item: ClipboardItem
+    let nsImage: NSImage?   // Decoded image for image cards; nil otherwise
+
+    private static let cardW: CGFloat = 235
+    private static let cardH: CGFloat = 250
+    private var info: ContentTypeInfo { ContentTypeInfo.from(item.content) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text(info.name.uppercased())
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: .rect(cornerRadius: 4))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            // Content
+            previewContent
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Footer
+            Divider()
+            HStack {
+                Text(footerText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+        .frame(width: Self.cardW, height: Self.cardH)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.25), radius: 16, y: 8)
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        switch item.content {
+        case .text(let c):
+            Text(c.plainText)
+                .font(.system(size: 13))
+                .lineLimit(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .richText(let c):
+            Text(c.plainTextFallback)
+                .font(.system(size: 13))
+                .lineLimit(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .image(_):
+            Group {
+                if let img = nsImage {
+                    Image(nsImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .clipped()
+                } else {
+                    Color.secondary.opacity(0.15)
+                        .overlay(Image(systemName: "photo").font(.system(size: 24)).foregroundStyle(.secondary))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.bottom, 8)
+        case .link(let c):
+            VStack(alignment: .leading, spacing: 6) {
+                if let title = c.title, !title.isEmpty {
+                    Text(title).font(.system(size: 13, weight: .medium)).lineLimit(5)
+                } else {
+                    Text(c.url.absoluteString).font(.system(size: 13)).lineLimit(6)
+                }
+                if let host = c.url.host {
+                    Text(host).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .code(let c):
+            Text(c.code)
+                .font(.system(size: 12, design: .monospaced))
+                .lineLimit(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .color(let c):
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(red: c.red, green: c.green, blue: c.blue, opacity: c.alpha))
+                .overlay(
+                    Text(c.hexValue.uppercased())
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(
+                            (0.299 * c.red + 0.587 * c.green + 0.114 * c.blue) > 0.5
+                                ? Color.black : Color.white
+                        )
+                )
+                .padding(.bottom, 8)
+        case .file(let c):
+            VStack(alignment: .leading, spacing: 6) {
+                Text(c.fileName).font(.system(size: 13, weight: .medium)).lineLimit(4)
+                Text(c.fileType.uppercased()).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .snippet(let c):
+            Text(c.content)
+                .font(.system(size: 13))
+                .lineLimit(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .multiple(let c):
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: "square.stack.3d.up").font(.system(size: 20))
+                Text("\(c.items.count) Items").font(.system(size: 13, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var footerText: String {
+        switch item.content {
+        case .text(let c): return "\(c.plainText.count) chars"
+        case .richText(let c): return "\(c.plainTextFallback.count) chars"
+        case .image(let c): return "\(c.format.rawValue.uppercased())"
+        case .file(let c): return c.fileName
+        case .link: return "Link"
+        case .code(let c): return "\(c.code.count) chars"
+        case .color: return "Color"
+        case .snippet(let c): return "\(c.content.count) chars"
+        case .multiple(let c): return "\(c.items.count) items"
+        }
+    }
+}
+
 // MARK: - AppKit Card Drag Overlay (all content types)
 
 /// Transparent NSView overlay that drives AppKit drag sessions for all card types.
@@ -469,19 +635,25 @@ struct ClipboardCardView: View {
 /// pasteboard types at `draggingEntered:`, before any lazy closures run.
 private struct AppKitCardDragOverlay: NSViewRepresentable {
     let item: ClipboardItem
-    let nsImage: NSImage?   // Pre-decoded image; nil for non-image cards
-    let fileURL: URL?        // Pre-written temp file; nil for non-image cards
+    let nsImage: NSImage?       // Pre-decoded image; nil for non-image cards
+    let fileURL: URL?           // Pre-written temp file; nil for non-image cards
+    let dragThumbnail: NSImage? // Full card snapshot via ImageRenderer
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> CardDragView {
         let v = CardDragView()
         v.coordinator = context.coordinator
+        v.autoresizingMask = [.width, .height]
         return v
     }
 
     func updateNSView(_ v: CardDragView, context: Context) {
         context.coordinator.parent = self
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: CardDragView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 235, height: proposal.height ?? 250)
     }
 
     // MARK: Coordinator — NSDraggingSource
@@ -500,6 +672,14 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         var coordinator: Coordinator?
         private var mouseDownPoint: NSPoint = .zero
         private var dragStarted = false
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            if let sv = superview {
+                frame = sv.bounds
+            }
+            autoresizingMask = [.width, .height]
+        }
 
         override func mouseDown(with event: NSEvent) {
             mouseDownPoint = convert(event.locationInWindow, from: nil)
@@ -520,11 +700,20 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             dragStarted = true
 
             let pbItem = buildPasteboardItem(for: coord.parent)
-            let thumbnail = coord.parent.nsImage ?? blankThumbnail()
+            // Use the pre-rendered full-card thumbnail; fall back to image or blank
+            let thumbnail = coord.parent.dragThumbnail
+                ?? coord.parent.nsImage
+                ?? blankThumbnail()
 
+            // Size matches the actual card; offset so the click point stays under cursor
+            let cardW: CGFloat = 235
+            let cardH: CGFloat = 250
             let dragItem = NSDraggingItem(pasteboardWriter: pbItem)
-            dragItem.setDraggingFrame(CGRect(x: p.x - 60, y: p.y - 45, width: 120, height: 90),
-                                      contents: thumbnail)
+            dragItem.setDraggingFrame(
+                CGRect(x: p.x - mouseDownPoint.x,
+                       y: p.y - mouseDownPoint.y,
+                       width: cardW, height: cardH),
+                contents: thumbnail)
             beginDraggingSession(with: [dragItem], event: event, source: coord)
         }
 

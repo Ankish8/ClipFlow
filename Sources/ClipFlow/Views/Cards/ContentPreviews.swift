@@ -174,52 +174,32 @@ struct FilePreviewCard: View {
     let content: FileContent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // File icon and name - larger layout
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: fileIcon)
-                        .font(.system(size: 24))
-                        .foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: 8) {
+            // Filename as primary content — full width, no icon
+            Text(content.fileName)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(4)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(content.fileName)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-
-                        if content.urls.count > 1 {
-                            Text("\(content.urls.count) files")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                // File path or additional info if space permits
-                if let firstURL = content.urls.first {
-                    Text(firstURL.lastPathComponent)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+            if content.urls.count > 1 {
+                Text("\(content.urls.count) files")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            // File type and size - larger and more prominent
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(content.fileType.uppercased())
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.primary)
+            // File type and size at bottom
+            HStack {
+                Text(content.fileType.uppercased())
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
 
-                    Spacer()
+                Spacer()
 
-                    Text(formatFileSize(content.fileSize))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
+                Text(formatFileSize(content.fileSize))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -268,50 +248,26 @@ struct LinkPreviewCard: View {
     let content: LinkContent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Link icon and title - larger layout
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "link")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.cyan)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let title = content.title, !title.isEmpty {
-                            Text(title)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(3)
-                        } else {
-                            Text("Web Link")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.primary)
-                        }
-                    }
-                }
-
-                // Domain prominently displayed
-                if let host = content.url.host {
-                    Text(host)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.cyan)
-                        .lineLimit(1)
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            // URL or page title — full width, no icon
+            if let title = content.title, !title.isEmpty {
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(5)
+            } else {
+                Text(content.url.absoluteString)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+                    .lineLimit(6)
             }
 
-            Spacer()
-
-            // Full URL at bottom
-            VStack(alignment: .leading, spacing: 4) {
-                Text("URL")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.secondary.opacity(0.8))
-
-                Text(content.url.absoluteString)
-                    .font(.system(size: 11))
+            // Domain as subtle secondary label
+            if let host = content.url.host {
+                Text(host)
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -361,44 +317,33 @@ struct MultiPreviewCard: View {
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Multi-content icon and header
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "square.stack.3d.up")
-                        .font(.system(size: 20))
-                        .foregroundStyle(colorScheme == .dark ? .white : .primary)
+        VStack(alignment: .leading, spacing: 8) {
+            // Item count — no icon
+            Text("\(content.items.count) Items")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(content.items.count) Items")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.primary)
+            Text("Multiple content types")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
 
-                        Text("Multiple content types")
+            // Content type breakdown
+            let contentTypes = content.items.map { $0.contentType }.removingDuplicates()
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(contentTypes.prefix(4), id: \.self) { type in
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.secondary.opacity(0.6))
+                            .frame(width: 4, height: 4)
+                        Text(type.capitalized)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }
-
-                // Show breakdown of content types
-                let contentTypes = content.items.map { $0.contentType }.removingDuplicates()
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(contentTypes.prefix(4), id: \.self) { type in
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.secondary.opacity(0.6))
-                                .frame(width: 4, height: 4)
-                            Text(type.capitalized)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    if contentTypes.count > 4 {
-                        Text("+ \(contentTypes.count - 4) more...")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.secondary.opacity(0.8))
-                    }
+                if contentTypes.count > 4 {
+                    Text("+ \(contentTypes.count - 4) more...")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.secondary.opacity(0.8))
                 }
             }
 
