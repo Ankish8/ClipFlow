@@ -114,7 +114,7 @@ struct TagFilterBarView: View {
                     onSearch: performSearch
                 )
             }
-            .padding(.horizontal, 32)
+            .padding(.horizontal, 16)
     }
 
     // MARK: - Clipboard History Chip
@@ -131,7 +131,7 @@ struct TagFilterBarView: View {
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             }
             .foregroundStyle(isSelected ? .white : .secondary)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.vertical, 6)
             // Fallback background for macOS < 26
             .background {

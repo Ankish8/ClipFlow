@@ -40,6 +40,20 @@ struct ClipboardOverlayView: View {
     }
 
     var body: some View {
+        // TimelineView keeps SwiftUI's render pipeline ticking every display frame on macOS 26,
+        // which forces .glassEffect to re-sample behind-window content continuously
+        // (fixes the "glass gets stuck when scrolling" issue).
+        if #available(macOS 26, *) {
+            TimelineView(.animation) { _ in
+                overlayContent
+            }
+        } else {
+            overlayContent
+        }
+    }
+
+    @ViewBuilder
+    private var overlayContent: some View {
         VStack(spacing: 0) {
             // Horizontal tag filter bar
             TagFilterBarView(
@@ -56,10 +70,10 @@ struct ClipboardOverlayView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     cardStack
-                        .padding(.horizontal, 32)
+                        .padding(.horizontal, 16)
                         .frame(maxWidth: .infinity)
                 }
-                .frame(height: 212)
+                .frame(height: 252)
                 .onChange(of: selectedIndex) { newIndex in
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newIndex, anchor: .center)
@@ -70,8 +84,10 @@ struct ClipboardOverlayView: View {
             Spacer().frame(height: 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(overlayBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .background {
+            if #available(macOS 26, *) { Color.clear } else { overlayBackground }
+        }
+        .overlayPanel(cornerRadius: 32)
         .onAppear {
             updateFilteredItems()
         }
@@ -101,40 +117,8 @@ struct ClipboardOverlayView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var overlayBackground: some View {
-        ZStack {
-            // Frosted glass blur effect
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-
-            // Subtle tinted overlay for depth
-            (colorScheme == .light ? Color.white.opacity(0.25) : Color.black.opacity(0.35))
-
-            // Center glow to lift the card area
-            RadialGradient(
-                colors: colorScheme == .light ? [
-                    Color.white.opacity(0.15),
-                    Color.white.opacity(0.0)
-                ] : [
-                    Color.white.opacity(0.08),
-                    Color.white.opacity(0.0)
-                ],
-                center: .center,
-                startRadius: 80,
-                endRadius: 600
-            )
-
-            // Edge vignette for frosted glass depth
-            LinearGradient(
-                colors: colorScheme == .light ? [
-                    Color.black.opacity(0.08), Color.clear, Color.clear, Color.black.opacity(0.08)
-                ] : [
-                    Color.black.opacity(0.15), Color.clear, Color.clear, Color.black.opacity(0.15)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .blendMode(.multiply)
-        }
-        .ignoresSafeArea()
+        VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
+            .ignoresSafeArea()
     }
 
     // MARK: - Card Stack (extracted for GlassEffectContainer wrapping)
@@ -236,7 +220,7 @@ struct VisualEffectView: NSViewRepresentable {
         view.state = .active
         // Mask the blur layer itself so it respects rounded corners
         view.wantsLayer = true
-        view.layer?.cornerRadius = 20
+        view.layer?.cornerRadius = 32
         view.layer?.masksToBounds = true
         return view
     }

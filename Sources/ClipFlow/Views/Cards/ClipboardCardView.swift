@@ -48,20 +48,16 @@ struct ClipboardCardView: View {
             // Metadata footer
             cardFooter
         }
-        .frame(width: cardWidth, height: 210)
-        // Fallback background on macOS < 26; glassCard() takes over on macOS 26+
-        .background {
-            if #available(macOS 26, *) { Color.clear } else { cardBackground }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(width: cardWidth, height: 250)
+        .background { cardBackground }
+        .clipShape(RoundedRectangle(cornerRadius: 20))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 20)
                 .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
         )
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
-        .glassCard(isSelected: isSelected)
         .onDrag {
             NSLog("🎯 DRAG: Starting drag for item: \(item.id.uuidString)")
             let provider = NSItemProvider()
@@ -260,27 +256,12 @@ struct ClipboardCardView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var cardBackground: some View {
-        ZStack {
-            // Strong card background like Paste app
-            RoundedRectangle(cornerRadius: 12)
-                .fill(colorScheme == .light ?
-                    Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.95) : // Much more opaque
-                    Color(.sRGB, red: 0.12, green: 0.12, blue: 0.12, opacity: 0.95)  // Strong dark cards
-                )
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.thinMaterial) // Subtle blur behind
-                )
-
-            // Strong border for clear definition
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(colorScheme == .light ?
-                    Color(.sRGB, red: 0.85, green: 0.87, blue: 0.9, opacity: 1.0) : // Solid border
-                    Color(.sRGB, red: 0.3, green: 0.3, blue: 0.3, opacity: 1.0),
-                    lineWidth: 1
-                )
-
-        }
+        RoundedRectangle(cornerRadius: 20)
+            .fill(.thinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
     }
 
     private var cardHeader: some View {
@@ -289,12 +270,12 @@ struct ClipboardCardView: View {
                 // Subtle content type badge
                 Text(contentTypeInfo.name.uppercased())
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(contentTypeInfo.color)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(contentTypeInfo.color.opacity(0.08))
+                            .fill(Color.white.opacity(0.12))
                     )
 
                 Spacer()

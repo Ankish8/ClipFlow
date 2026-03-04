@@ -102,7 +102,7 @@ class ClipboardOverlayWindow: NSWindow {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
-        let overlayHeight: CGFloat = 280 // top (10) + tag bar (40) + gap (8) + cards (212) + bottom (10) = 280
+        let overlayHeight: CGFloat = 320 // top (10) + tag bar (40) + gap (8) + cards (252) + bottom (10) = 320
         let horizontalMargin: CGFloat = 8  // Gap from left/right screen edges
         let bottomMargin: CGFloat = 8      // Gap above the dock (matches horizontal margin)
 

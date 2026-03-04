@@ -44,4 +44,16 @@ extension View {
             self
         }
     }
+
+    /// Full overlay panel surface.
+    /// macOS 26+: native Liquid Glass — truly transparent, samples real content behind the window.
+    /// macOS < 26: clips to shape only (NSVisualEffectView in background provides frosted blur).
+    @ViewBuilder
+    func overlayPanel(cornerRadius: CGFloat = 32) -> some View {
+        if #available(macOS 26, *) {
+            self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        } else {
+            self.clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        }
+    }
 }
