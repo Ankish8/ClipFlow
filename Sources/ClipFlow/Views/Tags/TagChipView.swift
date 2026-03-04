@@ -55,11 +55,7 @@ struct TagChipView: View {
                 // Tag color indicator - clickable to open color picker
                 Circle()
                     .fill(tagColor)
-                    .frame(width: 10, height: 10)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-                    )
+                    .frame(width: 8, height: 8)
                     .onTapGesture {
                         openColorPicker()
                     }
@@ -110,8 +106,10 @@ struct TagChipView: View {
                         )
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
         }
-        .buttonStyle(.glass(chipGlass))
+        .buttonStyle(.toolbarChip(isSelected: isSelected || isDropTarget, tint: tagColor))
         .onDrop(of: [UTType.clipboardItemID.identifier], isTargeted: $isDropTarget) { providers in
             guard let provider = providers.first else { return false }
 
@@ -136,18 +134,7 @@ struct TagChipView: View {
         }
     }
 
-    // MARK: - Glass Configuration
-
     private var tagColor: Color { tag.color.swiftUIColor }
-
-    /// Liquid Glass configuration: tinted when selected or targeted for drop
-    private var chipGlass: Glass {
-        if isSelected || isDropTarget {
-            .regular.tint(tagColor.opacity(isDropTarget ? 0.5 : 0.35)).interactive()
-        } else {
-            .regular.interactive()
-        }
-    }
 
     // MARK: - Color Change Methods
 

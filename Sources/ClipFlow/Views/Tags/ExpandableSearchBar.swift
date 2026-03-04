@@ -50,10 +50,10 @@ struct ExpandableSearchBar: View {
                 Text("Search")
                     .font(.system(size: 12, weight: .medium))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
         }
-        .buttonStyle(.glass)
+        .buttonStyle(.toolbarChip())
     }
 
     // MARK: - Expanded View (Search Field)

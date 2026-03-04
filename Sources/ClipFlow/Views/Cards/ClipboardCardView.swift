@@ -60,12 +60,7 @@ struct ClipboardCardView: View {
         }
         .frame(width: cardWidth, height: 250)
         .containerShape(.rect(cornerRadius: 20))
-        .glassEffect(
-            isSelected
-                ? .regular.tint(Color.accentColor.opacity(0.14)).interactive()
-                : .regular.interactive(),
-            in: .rect(cornerRadius: 20)
-        )
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)

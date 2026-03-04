@@ -130,10 +130,10 @@ struct TagFilterBarView: View {
                 Text("Clipboard History")
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
         }
-        .buttonStyle(.glass(isSelected ? .regular.tint(Color.accentColor.opacity(0.5)).interactive() : .regular.interactive()))
+        .buttonStyle(.toolbarChip(isSelected: isSelected, tint: .accentColor))
     }
 
     // MARK: - Divider
