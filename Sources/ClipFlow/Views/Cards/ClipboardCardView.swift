@@ -27,6 +27,9 @@ struct ClipboardCardView: View {
     // This prevents 10-15 conversions per filter change
     @State private var cachedAppIcon: Image? = nil
 
+    // PERFORMANCE: Cache metadata text — String.count is O(n) in Swift (Unicode traversal)
+    @State private var cachedMetadata = ""
+
     init(item: ClipboardItem, index: Int, isSelected: Bool, viewModel: ClipboardViewModel) {
         self.item = item
         self.index = index
@@ -63,172 +66,17 @@ struct ClipboardCardView: View {
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
-        .onDrag {
-            NSLog("🎯 DRAG: Starting drag for item: \(item.id.uuidString)")
-            let provider = NSItemProvider()
-
-            // FIRST: Register UUID with custom type for tag assignment
-            // This is checked by TagChipView dropDestination
-            provider.registerDataRepresentation(
-                forTypeIdentifier: UTType.clipboardItemID.identifier,
-                visibility: .all
-            ) { completion in
-                let data = self.item.id.uuidString.data(using: .utf8)!
-                NSLog("🎯 DRAG: Registered UUID with custom type for tagging: \(self.item.id.uuidString)")
-                completion(data, nil)
-                return nil
-            }
-
-            // SECOND: Register actual content for drag-to-paste functionality
-            switch item.content {
-            case .image(_):
-                // registerObject writes NSImage's type declarations to the drag
-                // pasteboard EAGERLY at drag-start (not lazily at drop time).
-                // Chrome checks available types at drag-enter; lazy closures aren't
-                // populated yet so Chrome rejects the drop. Eager registration fixes this.
-                if let nsImage = cachedNSImage {
-                    provider.registerObject(nsImage, visibility: .all)
-                }
-                // Also provide the pre-cached file URL — Chrome needs a file:// URL
-                // to open the image in a new tab or pass it to Gmail/Docs as a file.
-                if let cachedPath = cachedImagePath {
-                    let fileURL = URL(fileURLWithPath: cachedPath)
-                    provider.registerFileRepresentation(
-                        forTypeIdentifier: UTType.png.identifier,
-                        fileOptions: [],
-                        visibility: .all
-                    ) { completion in
-                        completion(fileURL, false, nil)
-                        return Progress()
-                    }
-                }
-
-            case .text(let textContent):
-                // For text, provide string content
-                if let data = textContent.plainText.data(using: .utf8) {
-                    provider.registerDataRepresentation(
-                        forTypeIdentifier: UTType.utf8PlainText.identifier,
-                        visibility: .all
-                    ) { completion in
-                        completion(data, nil)
-                        return nil
-                    }
-                    NSLog("🎯 DRAG: Registered text content (\(textContent.plainText.count) chars)")
-                }
-
-            case .richText(let richContent):
-                // For rich text, provide plain text fallback
-                if let data = richContent.plainTextFallback.data(using: .utf8) {
-                    provider.registerDataRepresentation(
-                        forTypeIdentifier: UTType.utf8PlainText.identifier,
-                        visibility: .all
-                    ) { completion in
-                        completion(data, nil)
-                        return nil
-                    }
-                    NSLog("🎯 DRAG: Registered rich text content")
-                }
-
-            case .file(let fileContent):
-                // For files, provide file URLs
-                for fileURL in fileContent.urls {
-                    provider.registerFileRepresentation(
-                        forTypeIdentifier: UTType.fileURL.identifier,
-                        fileOptions: .openInPlace,
-                        visibility: .all
-                    ) { completion in
-                        completion(fileURL, true, nil)
-                        return Progress()
-                    }
-                }
-                NSLog("🎯 DRAG: Registered \(fileContent.urls.count) file(s)")
-
-            case .link(let linkContent):
-                // For links, provide URL string
-                if let data = linkContent.url.absoluteString.data(using: .utf8) {
-                    provider.registerDataRepresentation(
-                        forTypeIdentifier: UTType.url.identifier,
-                        visibility: .all
-                    ) { completion in
-                        completion(data, nil)
-                        return nil
-                    }
-                    NSLog("🎯 DRAG: Registered link URL")
-                }
-
-            case .code(let codeContent):
-                // For code, provide string content
-                if let data = codeContent.code.data(using: .utf8) {
-                    provider.registerDataRepresentation(
-                        forTypeIdentifier: UTType.utf8PlainText.identifier,
-                        visibility: .all
-                    ) { completion in
-                        completion(data, nil)
-                        return nil
-                    }
-                    NSLog("🎯 DRAG: Registered code content")
-                }
-
-            case .color(let colorContent):
-                // For colors, provide hex string
-                if let data = colorContent.hexValue.data(using: .utf8) {
-                    provider.registerDataRepresentation(
-                        forTypeIdentifier: UTType.utf8PlainText.identifier,
-                        visibility: .all
-                    ) { completion in
-                        completion(data, nil)
-                        return nil
-                    }
-                    NSLog("🎯 DRAG: Registered color hex value")
-                }
-
-            case .snippet(let snippetContent):
-                // For snippets, provide string content
-                if let data = snippetContent.content.data(using: .utf8) {
-                    provider.registerDataRepresentation(
-                        forTypeIdentifier: UTType.utf8PlainText.identifier,
-                        visibility: .all
-                    ) { completion in
-                        completion(data, nil)
-                        return nil
-                    }
-                    NSLog("🎯 DRAG: Registered snippet content")
-                }
-
-            case .multiple(let multiContent):
-                // For multiple items, provide the first text-like content
-                for subItem in multiContent.items {
-                    if case .text(let textContent) = subItem,
-                       let data = textContent.plainText.data(using: .utf8) {
-                        provider.registerDataRepresentation(
-                            forTypeIdentifier: UTType.utf8PlainText.identifier,
-                            visibility: .all
-                        ) { completion in
-                            completion(data, nil)
-                            return nil
-                        }
-                        NSLog("🎯 DRAG: Registered multi-item content")
-                        break
-                    }
-                }
-            }
-
-            // Note: We no longer register UUID as plainText since we have custom UTType
-            // This prevents UUID from interfering with paste operations
-            return provider
-        }
         .overlay {
-            // AppKit drag overlay for images: NSDraggingItem writes to the drag
-            // pasteboard SYNCHRONOUSLY, so Chrome sees data at drag-enter.
-            // SwiftUI .onDrag uses lazy NSItemProvider closures — Chrome checks
-            // types before data is available and rejects the drop.
-            if case .image = item.content {
-                AppKitImageDragOverlay(
-                    nsImage: cachedNSImage,
-                    fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) },
-                    itemID: item.id
-                )
-            }
+            // AppKit drag overlay for ALL card types.
+            // SwiftUI .onDrag uses lazy NSItemProvider closures and does not fire
+            // reliably from non-activating NSPanels. AppKit beginDraggingSession
+            // works correctly from any panel, writes the pasteboard synchronously
+            // (required by Chrome), and registers the UUID for tag-chip drops.
+            AppKitCardDragOverlay(
+                item: item,
+                nsImage: cachedNSImage,
+                fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) }
+            )
         }
         .onTapGesture(count: 2) {
             // Double-click to paste and hide overlay
@@ -250,6 +98,9 @@ struct ClipboardCardView: View {
             // PERFORMANCE: Cache time-ago once — avoids formatter + Date() on every render
             cachedTimeAgo = Self.relativeDateFormatter.localizedString(
                 for: item.timestamps.createdAt, relativeTo: Date())
+
+            // PERFORMANCE: Cache metadata — String.count is O(n) for Unicode strings
+            cachedMetadata = computeMetadataText()
 
             // PERFORMANCE: NSImage(data:) decodes TIFF with multiple resolutions — move off main thread
             if let iconData = item.source.applicationIcon {
@@ -354,7 +205,9 @@ struct ClipboardCardView: View {
         }
     }
 
-    private var metadataText: String {
+    private var metadataText: String { cachedMetadata }
+
+    private func computeMetadataText() -> String {
         switch item.content {
         case .text(let content):
             let count = content.plainText.count
@@ -602,38 +455,40 @@ struct ClipboardCardView: View {
     }
 }
 
-// MARK: - AppKit Image Drag Overlay
+// MARK: - AppKit Card Drag Overlay (all content types)
 
-/// Transparent NSView overlay that drives AppKit drag sessions for image cards.
+/// Transparent NSView overlay that drives AppKit drag sessions for all card types.
 ///
-/// Chrome (and other Chromium-based apps) reads NSPasteboard contents
-/// synchronously at `draggingEntered:`. SwiftUI's `.onDrag` uses lazy
-/// NSItemProvider closures — the data isn't populated until drop time, so Chrome
-/// never sees it and rejects the drop. `NSDraggingItem(pasteboardWriter: NSImage)`
-/// writes to the pasteboard *synchronously* at drag-start, including
-/// "NeXT TIFF v4.0 pasteboard type" which Chrome specifically checks for.
-private struct AppKitImageDragOverlay: NSViewRepresentable {
-    let nsImage: NSImage?
-    let fileURL: URL?
-    let itemID: UUID
+/// SwiftUI's `.onDrag` uses lazy NSItemProvider closures and does not reliably
+/// fire from non-activating NSPanels — SwiftUI's drag gesture recogniser requires
+/// normal application-activation event routing that panels deliberately bypass.
+///
+/// This overlay uses `beginDraggingSession(with:event:source:)` which works from
+/// any NSView regardless of panel activation state, and writes all pasteboard data
+/// SYNCHRONOUSLY via NSPasteboardItem — required by Chrome/Chromium which reads
+/// pasteboard types at `draggingEntered:`, before any lazy closures run.
+private struct AppKitCardDragOverlay: NSViewRepresentable {
+    let item: ClipboardItem
+    let nsImage: NSImage?   // Pre-decoded image; nil for non-image cards
+    let fileURL: URL?        // Pre-written temp file; nil for non-image cards
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> ImageDragView {
-        let v = ImageDragView()
+    func makeNSView(context: Context) -> CardDragView {
+        let v = CardDragView()
         v.coordinator = context.coordinator
         return v
     }
 
-    func updateNSView(_ v: ImageDragView, context: Context) {
+    func updateNSView(_ v: CardDragView, context: Context) {
         context.coordinator.parent = self
     }
 
     // MARK: Coordinator — NSDraggingSource
 
     final class Coordinator: NSObject, NSDraggingSource {
-        var parent: AppKitImageDragOverlay
-        init(_ p: AppKitImageDragOverlay) { parent = p }
+        var parent: AppKitCardDragOverlay
+        init(_ p: AppKitCardDragOverlay) { parent = p }
 
         func draggingSession(_ session: NSDraggingSession,
                              sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
@@ -641,7 +496,7 @@ private struct AppKitImageDragOverlay: NSViewRepresentable {
 
     // MARK: Drag-capturing NSView
 
-    final class ImageDragView: NSView {
+    final class CardDragView: NSView {
         var coordinator: Coordinator?
         private var mouseDownPoint: NSPoint = .zero
         private var dragStarted = false
@@ -649,13 +504,11 @@ private struct AppKitImageDragOverlay: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             mouseDownPoint = convert(event.locationInWindow, from: nil)
             dragStarted = false
-            super.mouseDown(with: event)   // forward so SwiftUI tap gestures still work
+            super.mouseDown(with: event)   // forward so SwiftUI tap gestures still fire
         }
 
         override func mouseDragged(with event: NSEvent) {
-            guard !dragStarted,
-                  let coord = coordinator,
-                  let img = coord.parent.nsImage else {
+            guard !dragStarted, let coord = coordinator else {
                 super.mouseDragged(with: event)
                 return
             }
@@ -666,30 +519,12 @@ private struct AppKitImageDragOverlay: NSViewRepresentable {
             }
             dragStarted = true
 
-            // ONE NSPasteboardItem with all types — single drag thumbnail, no stacking.
-            let pbItem = NSPasteboardItem()
-
-            // TIFF (modern UTType + legacy string) — Chrome checks "NeXT TIFF v4.0 pasteboard type"
-            if let tiffData = img.tiffRepresentation {
-                pbItem.setData(tiffData, forType: .tiff)
-                pbItem.setData(tiffData, forType: NSPasteboard.PasteboardType("NeXT TIFF v4.0 pasteboard type"))
-            }
-
-            // File URL + legacy filenames — Finder needs both to accept a file drop
-            if let url = coord.parent.fileURL {
-                pbItem.setString(url.absoluteString, forType: .fileURL)
-                pbItem.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
-            }
-
-            // UUID — ClipFlow's internal tag-assignment type
-            if let data = coord.parent.itemID.uuidString.data(using: .utf8) {
-                pbItem.setData(data, forType: NSPasteboard.PasteboardType(UTType.clipboardItemID.identifier))
-            }
+            let pbItem = buildPasteboardItem(for: coord.parent)
+            let thumbnail = coord.parent.nsImage ?? blankThumbnail()
 
             let dragItem = NSDraggingItem(pasteboardWriter: pbItem)
             dragItem.setDraggingFrame(CGRect(x: p.x - 60, y: p.y - 45, width: 120, height: 90),
-                                      contents: img)
-
+                                      contents: thumbnail)
             beginDraggingSession(with: [dragItem], event: event, source: coord)
         }
 
@@ -700,6 +535,69 @@ private struct AppKitImageDragOverlay: NSViewRepresentable {
 
         override func hitTest(_ point: NSPoint) -> NSView? { self }
         override var acceptsFirstResponder: Bool { false }
+
+        // MARK: Pasteboard Builder
+
+        private func buildPasteboardItem(for overlay: AppKitCardDragOverlay) -> NSPasteboardItem {
+            let pbItem = NSPasteboardItem()
+            let item = overlay.item
+
+            // UUID — ClipFlow's internal type checked by TagChipView.onDrop (always)
+            if let data = item.id.uuidString.data(using: .utf8) {
+                pbItem.setData(data, forType: NSPasteboard.PasteboardType(UTType.clipboardItemID.identifier))
+            }
+
+            // Content-specific data for paste into other apps
+            switch item.content {
+            case .image(_):
+                // TIFF + legacy string — Chrome checks "NeXT TIFF v4.0 pasteboard type"
+                if let tiffData = overlay.nsImage?.tiffRepresentation {
+                    pbItem.setData(tiffData, forType: .tiff)
+                    pbItem.setData(tiffData, forType: NSPasteboard.PasteboardType("NeXT TIFF v4.0 pasteboard type"))
+                }
+                // File URL + legacy filenames — Finder needs both
+                if let url = overlay.fileURL {
+                    pbItem.setString(url.absoluteString, forType: .fileURL)
+                    pbItem.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
+                }
+            case .text(let c):
+                pbItem.setString(c.plainText, forType: .string)
+            case .richText(let c):
+                pbItem.setString(c.plainTextFallback, forType: .string)
+            case .link(let c):
+                let s = c.url.absoluteString
+                pbItem.setString(s, forType: .string)
+                pbItem.setString(s, forType: .URL)
+            case .code(let c):
+                pbItem.setString(c.code, forType: .string)
+            case .color(let c):
+                pbItem.setString(c.hexValue, forType: .string)
+            case .snippet(let c):
+                pbItem.setString(c.content, forType: .string)
+            case .file(let c):
+                if let url = c.urls.first {
+                    pbItem.setString(url.absoluteString, forType: .fileURL)
+                    pbItem.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
+                }
+            case .multiple(let c):
+                for subItem in c.items {
+                    if case .text(let tc) = subItem {
+                        pbItem.setString(tc.plainText, forType: .string)
+                        break
+                    }
+                }
+            }
+
+            return pbItem
+        }
+
+        private func blankThumbnail() -> NSImage {
+            NSImage(size: NSSize(width: 120, height: 90), flipped: false) { rect in
+                NSColor.windowBackgroundColor.withAlphaComponent(0.9).setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).fill()
+                return true
+            }
+        }
     }
 }
 
