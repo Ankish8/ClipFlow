@@ -178,35 +178,30 @@ struct ClipboardCardView: View {
                     .padding(.vertical, 3)
                     .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
-                // Pin + Copy buttons — shown when pinned/hovered.
-                // isHoveringHeader comes from CardDragView NSTrackingArea (not .onHover).
+                // Pin + Copy buttons — shown when pinned or hovering.
+                // hitTest returns nil for the header region so SwiftUI buttons
+                // receive clicks and .onHover on HeaderIconButton works normally.
                 if item.isPinned || isHoveringHeader {
-                    HStack(spacing: 6) {
-                        // Copy to clipboard icon
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.15)) { showCopyFeedback = true }
+                    HStack(spacing: 4) {
+                        HeaderIconButton(
+                            icon: showCopyFeedback ? "checkmark" : "doc.on.doc",
+                            activeColor: showCopyFeedback ? .green : .secondary
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.12)) { showCopyFeedback = true }
                             viewModel.copyToClipboard(item)
                             Task {
-                                try? await Task.sleep(for: .milliseconds(600))
-                                withAnimation(.easeInOut(duration: 0.15)) { showCopyFeedback = false }
+                                try? await Task.sleep(for: .milliseconds(700))
+                                withAnimation(.easeInOut(duration: 0.12)) { showCopyFeedback = false }
                             }
-                        } label: {
-                            Image(systemName: showCopyFeedback ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(showCopyFeedback ? .green : .secondary)
                         }
-                        .buttonStyle(.plain)
 
-                        // Pin toggle icon
-                        Button {
+                        HeaderIconButton(
+                            icon: item.isPinned ? "pin.fill" : "pin",
+                            activeColor: item.isPinned ? .white : .secondary,
+                            rotation: item.isPinned ? 45 : 0
+                        ) {
                             viewModel.setPinned(!item.isPinned, for: item)
-                        } label: {
-                            Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(item.isPinned ? Color.white : .secondary)
-                                .rotationEffect(.degrees(item.isPinned ? 45 : 0))
                         }
-                        .buttonStyle(.plain)
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     .animation(.easeInOut(duration: 0.15), value: isHoveringHeader)
@@ -704,6 +699,35 @@ private struct EditWindowView: View {
     }
 }
 
+// MARK: - Header Icon Button
+
+/// Small icon button for the card header. Owns its own hover state for the
+/// circular background highlight — works because CardDragView.hitTest returns
+/// nil for the header region, so SwiftUI receives events there normally.
+private struct HeaderIconButton: View {
+    let icon: String
+    let activeColor: Color
+    var rotation: Double = 0
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(activeColor)
+                .rotationEffect(.degrees(rotation))
+                .frame(width: 22, height: 22)
+                .background(isHovered ? Color.white.opacity(0.15) : Color.clear,
+                            in: Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeInOut(duration: 0.1), value: isHovered)
+    }
+}
+
 // MARK: - Edit Link Window View
 
 private struct EditLinkWindowView: View {
@@ -1075,7 +1099,13 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             super.mouseUp(with: event)
         }
 
-        override func hitTest(_ point: NSPoint) -> NSView? { self }
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            // Return nil for the header region so SwiftUI buttons receive clicks.
+            // In unflipped AppKit coords (origin = bottom-left), the header sits at
+            // the visual top of the card: y ≥ bounds.height - headerPt.
+            if point.y >= bounds.height - headerPt { return nil }
+            return self
+        }
         override var acceptsFirstResponder: Bool { false }
 
         // Forward right-click context menu to the SwiftUI hosting view.
