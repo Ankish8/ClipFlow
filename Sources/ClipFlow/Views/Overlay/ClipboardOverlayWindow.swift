@@ -9,6 +9,11 @@ class ClipboardOverlayWindow: NSWindow {
     private var globalEventMonitor: Any? // Monitor clicks in other apps
     private var lastInsideClickTime: Date? // Track last inside click to prevent double-firing
 
+    // Forces the glass compositor to re-sample behind-window content every frame.
+    // Without this, glassEffect takes a static snapshot and never updates when
+    // content behind the window changes (e.g. scrolling a browser behind the overlay).
+    private var compositorTimer: Timer?
+
     init() {
         // Start with temporary frame - will be set properly in setupWindow
         super.init(
@@ -132,6 +137,9 @@ class ClipboardOverlayWindow: NSWindow {
         alphaValue = 1.0
         orderFront(nil)
 
+        // Start forcing the glass compositor to re-sample every frame
+        startLiveCompositing()
+
         // Animate sliding up from bottom with subtle spring animation
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
@@ -145,6 +153,9 @@ class ClipboardOverlayWindow: NSWindow {
     }
 
     func hideOverlay() {
+        // Stop live compositing before hiding
+        stopLiveCompositing()
+
         // Animate sliding down with spring animation
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
@@ -160,6 +171,24 @@ class ClipboardOverlayWindow: NSWindow {
                 self.orderOut(nil)
             }
         }
+    }
+
+    private func startLiveCompositing() {
+        stopLiveCompositing() // prevent double-start
+        // Mark both the NSView AND its backing CALayer as needing display.
+        // NSHostingView can suppress needsDisplay when SwiftUI thinks nothing changed;
+        // marking the layer directly bypasses that optimization and forces the glass
+        // compositor to re-sample behind-window content on every display frame.
+        compositorTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.contentView?.needsDisplay = true
+            self?.contentView?.layer?.setNeedsDisplay()
+        }
+        RunLoop.main.add(compositorTimer!, forMode: .common)
+    }
+
+    private func stopLiveCompositing() {
+        compositorTimer?.invalidate()
+        compositorTimer = nil
     }
 
     func setOverlayView(_ view: ClipboardOverlayView) {

@@ -12,6 +12,13 @@ struct ClipboardOverlayView: View {
 
     // PERFORMANCE: Cache filtered items instead of recomputing on every render
     @State private var filteredItems: [ClipboardItem] = []
+    // PERFORMANCE: Avoid Array(enumerated()) allocation on every render
+    @State private var enumeratedFilteredItems: [(offset: Int, element: ClipboardItem)] = []
+
+    // Glass compositor: a perpetual animation keeps SwiftUI's render loop at 60fps,
+    // which drives TimelineView(.animation) to continuously re-sample glassEffect.
+    // Without an active animation the schedule drops to ~0fps and glass freezes.
+    @State private var glassAnimationPhase: Double = 0
 
     // Default initializer creates its own viewModel (for standalone use)
     init() {
@@ -37,14 +44,26 @@ struct ClipboardOverlayView: View {
         }
 
         filteredItems = items
+        enumeratedFilteredItems = Array(items.enumerated())
     }
 
     var body: some View {
-        // TimelineView keeps SwiftUI's render pipeline ticking every display frame,
-        // which forces .glassEffect to re-sample behind-window content continuously
-        // (fixes the "glass gets stuck when scrolling" issue).
+        // TimelineView(.animation) fires at display refresh rate while animations run.
+        // The perpetual glassAnimationPhase animation (started in onAppear below) keeps
+        // the schedule active at 60fps indefinitely, so glassEffect re-samples every frame.
         TimelineView(.animation) { _ in
             overlayContent
+                // Imperceptible opacity change tied to the perpetual animation.
+                // SwiftUI sees genuinely different output each frame and re-renders
+                // overlayContent including its glassEffect layer.
+                .opacity(1.0 - glassAnimationPhase * 0.000001)
+        }
+        .onAppear {
+            // Linear animation over 1,000,000 s ≈ 11 days: effectively infinite.
+            // Total opacity change: 0.000001 — completely invisible.
+            withAnimation(.linear(duration: 1_000_000).repeatForever(autoreverses: false)) {
+                glassAnimationPhase = 1.0
+            }
         }
     }
 
@@ -117,20 +136,18 @@ struct ClipboardOverlayView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    // MARK: - Card Stack (wrapped in GlassEffectContainer)
+    // MARK: - Card Stack
 
     private var cardStack: some View {
-        GlassEffectContainer(spacing: 16) {
-            cardStackContent
-        }
+        cardStackContent
     }
 
     private var cardStackContent: some View {
         LazyHStack(spacing: 16) {
-            if filteredItems.count <= 6 {
+            if enumeratedFilteredItems.count <= 6 {
                 Spacer().frame(minWidth: 0)
             }
-            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+            ForEach(enumeratedFilteredItems, id: \.element.id) { index, item in
                 ClipboardCardView(
                     item: item,
                     index: index + 1,
@@ -142,7 +159,7 @@ struct ClipboardOverlayView: View {
                     selectItem(index: index)
                 }
             }
-            if filteredItems.count <= 6 {
+            if enumeratedFilteredItems.count <= 6 {
                 Spacer().frame(minWidth: 0)
             }
         }

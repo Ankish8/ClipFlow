@@ -206,12 +206,6 @@ struct ClipboardCardView: View {
             // This prevents UUID from interfering with paste operations
             return provider
         }
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.3)
-                .onEnded { _ in
-                    // Alternative drag gesture for traditional drag-and-drop
-                }
-        )
         .onTapGesture(count: 2) {
             // Double-click to paste and hide overlay
             pasteAndHideOverlay()
@@ -258,10 +252,10 @@ struct ClipboardCardView: View {
 
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 20)
-            .fill(.regularMaterial)
+            .fill(isSelected ? Color.customAccent.opacity(0.14) : Color.primary.opacity(0.07))
             .overlay(
                 RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
             )
     }
 
