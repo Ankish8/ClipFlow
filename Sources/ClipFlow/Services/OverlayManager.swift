@@ -73,8 +73,10 @@ class OverlayManager: ObservableObject {
         NSLog("🎬 Starting show animation")
 
         window.showOverlay()
-        window.orderFront(nil)  // CHANGED: Don't make key - prevents focus steal
-        // REMOVED: NSApp.activate - don't steal focus from active text field
+        // NSPanel with .nonactivatingPanel: makeKeyAndOrderFront makes the panel key
+        // (required for NSGlassEffectView live compositing) WITHOUT activating ClipFlow
+        // or stealing focus from the user's current app/text field.
+        window.makeKeyAndOrderFront(nil)
 
         isVisible = true
 
@@ -134,25 +136,17 @@ class OverlayManager: ObservableObject {
     private func createOverlayWindow() {
         overlayWindow = ClipboardOverlayWindow()
 
-        // Set up the SwiftUI content with shared ViewModel
-        let contentView = ClipboardOverlayView(viewModel: sharedViewModel)
-        let hostingView = NSHostingView(rootView: contentView)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        let swiftUIContent = ClipboardOverlayView(viewModel: sharedViewModel)
+        overlayWindow?.setOverlayView(swiftUIContent)
 
-        // Connect the view to the window for keyboard handling
-        overlayWindow?.setOverlayView(contentView)
+        // NSGlassEffectView — Apple's native Liquid Glass (macOS 26+).
+        // Per WWDC25 session 310: set contentView, not addSubview.
+        // The glass view ties its geometry to contentView via Auto Layout automatically.
+        let glassView = NSGlassEffectView()
+        glassView.cornerRadius = 32
+        glassView.contentView = NSHostingView(rootView: swiftUIContent)
 
-        overlayWindow?.contentView = hostingView
-
-        // Set up constraints
-        if let contentView = overlayWindow?.contentView {
-            NSLayoutConstraint.activate([
-                hostingView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                hostingView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-                hostingView.topAnchor.constraint(equalTo: contentView.topAnchor),
-                hostingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
-            ])
-        }
+        overlayWindow?.contentView = glassView
     }
 
     func cleanup() {

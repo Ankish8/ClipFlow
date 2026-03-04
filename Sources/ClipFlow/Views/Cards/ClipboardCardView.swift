@@ -11,6 +11,7 @@ struct ClipboardCardView: View {
     private let contentTypeInfo: ContentTypeInfo
 
     @State private var cachedImagePath: String? = nil
+    @State private var cachedNSImage: NSImage? = nil
     @State private var showCopyFeedback = false
     @State private var showTagMenu = false
     @State private var showNewTagCreator = false
@@ -78,7 +79,15 @@ struct ClipboardCardView: View {
             // SECOND: Register actual content for drag-to-paste functionality
             switch item.content {
             case .image(_):
-                // For images, provide the pre-cached temporary file
+                // registerObject writes NSImage's type declarations to the drag
+                // pasteboard EAGERLY at drag-start (not lazily at drop time).
+                // Chrome checks available types at drag-enter; lazy closures aren't
+                // populated yet so Chrome rejects the drop. Eager registration fixes this.
+                if let nsImage = cachedNSImage {
+                    provider.registerObject(nsImage, visibility: .all)
+                }
+                // Also provide the pre-cached file URL — Chrome needs a file:// URL
+                // to open the image in a new tab or pass it to Gmail/Docs as a file.
                 if let cachedPath = cachedImagePath {
                     let fileURL = URL(fileURLWithPath: cachedPath)
                     provider.registerFileRepresentation(
@@ -89,7 +98,6 @@ struct ClipboardCardView: View {
                         completion(fileURL, false, nil)
                         return Progress()
                     }
-                    NSLog("🎯 DRAG: Registered image file: \(fileURL.lastPathComponent)")
                 }
 
             case .text(let textContent):
@@ -206,6 +214,19 @@ struct ClipboardCardView: View {
             // This prevents UUID from interfering with paste operations
             return provider
         }
+        .overlay {
+            // AppKit drag overlay for images: NSDraggingItem writes to the drag
+            // pasteboard SYNCHRONOUSLY, so Chrome sees data at drag-enter.
+            // SwiftUI .onDrag uses lazy NSItemProvider closures — Chrome checks
+            // types before data is available and rejects the drop.
+            if case .image = item.content {
+                AppKitImageDragOverlay(
+                    nsImage: cachedNSImage,
+                    fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) },
+                    itemID: item.id
+                )
+            }
+        }
         .onTapGesture(count: 2) {
             // Double-click to paste and hide overlay
             pasteAndHideOverlay()
@@ -231,13 +252,16 @@ struct ClipboardCardView: View {
                 }
             }
 
-            // Create temporary file for images asynchronously to avoid blocking main thread during drag
+            // Decode NSImage and write temp file — both needed before the user drags.
+            // .userInitiated priority so they're ready quickly after the card appears.
             if case .image(let imageContent) = item.content {
-                Task.detached(priority: .utility) {
-                    if let tempPath = await createTemporaryImageFileAsync(from: imageContent) {
-                        await MainActor.run {
-                            cachedImagePath = tempPath
-                        }
+                Task.detached(priority: .userInitiated) {
+                    let imageData = imageContent.data
+                    let nsImage = NSImage(data: imageData)
+                    let tempPath = await createTemporaryImageFileAsync(from: imageContent)
+                    await MainActor.run {
+                        cachedNSImage = nsImage
+                        if let tempPath { cachedImagePath = tempPath }
                     }
                 }
             }
@@ -609,6 +633,107 @@ struct ClipboardCardView: View {
             viewModel.addTagToItem(tagId: tag.id, itemId: item.id)
             itemTags.append(tag)
         }
+    }
+}
+
+// MARK: - AppKit Image Drag Overlay
+
+/// Transparent NSView overlay that drives AppKit drag sessions for image cards.
+///
+/// Chrome (and other Chromium-based apps) reads NSPasteboard contents
+/// synchronously at `draggingEntered:`. SwiftUI's `.onDrag` uses lazy
+/// NSItemProvider closures — the data isn't populated until drop time, so Chrome
+/// never sees it and rejects the drop. `NSDraggingItem(pasteboardWriter: NSImage)`
+/// writes to the pasteboard *synchronously* at drag-start, including
+/// "NeXT TIFF v4.0 pasteboard type" which Chrome specifically checks for.
+private struct AppKitImageDragOverlay: NSViewRepresentable {
+    let nsImage: NSImage?
+    let fileURL: URL?
+    let itemID: UUID
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> ImageDragView {
+        let v = ImageDragView()
+        v.coordinator = context.coordinator
+        return v
+    }
+
+    func updateNSView(_ v: ImageDragView, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    // MARK: Coordinator — NSDraggingSource
+
+    final class Coordinator: NSObject, NSDraggingSource {
+        var parent: AppKitImageDragOverlay
+        init(_ p: AppKitImageDragOverlay) { parent = p }
+
+        func draggingSession(_ session: NSDraggingSession,
+                             sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+    }
+
+    // MARK: Drag-capturing NSView
+
+    final class ImageDragView: NSView {
+        var coordinator: Coordinator?
+        private var mouseDownPoint: NSPoint = .zero
+        private var dragStarted = false
+
+        override func mouseDown(with event: NSEvent) {
+            mouseDownPoint = convert(event.locationInWindow, from: nil)
+            dragStarted = false
+            super.mouseDown(with: event)   // forward so SwiftUI tap gestures still work
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard !dragStarted,
+                  let coord = coordinator,
+                  let img = coord.parent.nsImage else {
+                super.mouseDragged(with: event)
+                return
+            }
+            let p = convert(event.locationInWindow, from: nil)
+            guard hypot(p.x - mouseDownPoint.x, p.y - mouseDownPoint.y) > 4 else {
+                super.mouseDragged(with: event)
+                return
+            }
+            dragStarted = true
+
+            // ONE NSPasteboardItem with all types — single drag thumbnail, no stacking.
+            let pbItem = NSPasteboardItem()
+
+            // TIFF (modern UTType + legacy string) — Chrome checks "NeXT TIFF v4.0 pasteboard type"
+            if let tiffData = img.tiffRepresentation {
+                pbItem.setData(tiffData, forType: .tiff)
+                pbItem.setData(tiffData, forType: NSPasteboard.PasteboardType("NeXT TIFF v4.0 pasteboard type"))
+            }
+
+            // File URL + legacy filenames — Finder needs both to accept a file drop
+            if let url = coord.parent.fileURL {
+                pbItem.setString(url.absoluteString, forType: .fileURL)
+                pbItem.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
+            }
+
+            // UUID — ClipFlow's internal tag-assignment type
+            if let data = coord.parent.itemID.uuidString.data(using: .utf8) {
+                pbItem.setData(data, forType: NSPasteboard.PasteboardType(UTType.clipboardItemID.identifier))
+            }
+
+            let dragItem = NSDraggingItem(pasteboardWriter: pbItem)
+            dragItem.setDraggingFrame(CGRect(x: p.x - 60, y: p.y - 45, width: 120, height: 90),
+                                      contents: img)
+
+            beginDraggingSession(with: [dragItem], event: event, source: coord)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            dragStarted = false
+            super.mouseUp(with: event)
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { self }
+        override var acceptsFirstResponder: Bool { false }
     }
 }
 

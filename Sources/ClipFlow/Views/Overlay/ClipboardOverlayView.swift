@@ -43,9 +43,6 @@ struct ClipboardOverlayView: View {
     }
 
     var body: some View {
-        // Glass refresh is handled at the NSView level by ClipboardOverlayWindow's
-        // compositorTimer (needsDisplay = true at 60fps), which updates Core Animation
-        // compositing without forcing SwiftUI view body re-evaluation.
         overlayContent
     }
 

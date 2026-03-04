@@ -31,10 +31,10 @@ extension View {
         self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
     }
 
-    /// Full overlay panel surface with native Liquid Glass.
+    /// Clips content to the overlay panel's rounded rect shape.
+    /// Live Liquid Glass compositing is handled by NSGlassEffectView at the window level;
+    /// applying glassEffect here would create a second compositor on top of it.
     func overlayPanel(cornerRadius: CGFloat = 32) -> some View {
-        self
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        self.clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
 }
