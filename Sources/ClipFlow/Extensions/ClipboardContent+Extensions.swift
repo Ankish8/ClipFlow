@@ -18,7 +18,7 @@ extension ClipboardContent {
         case .code(let content):
             return content.code
         case .color(let content):
-            return content.hexString
+            return content.hexValue
         case .snippet(let content):
             return content.content
         case .multiple(let content):
@@ -41,12 +41,4 @@ extension ClipboardContent {
     }
 }
 
-extension ColorContent {
-    var hexString: String {
-        let r = Int(red * 255)
-        let g = Int(green * 255)
-        let b = Int(blue * 255)
-        return String(format: "#%02X%02X%02X", r, g, b)
-    }
-}
 

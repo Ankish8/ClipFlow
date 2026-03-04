@@ -25,7 +25,7 @@ class ClipboardOverlayWindow: NSWindow {
         // Window properties
         isOpaque = false
         backgroundColor = NSColor.clear
-        hasShadow = false  // No shadow for clean glassmorphism effect
+        hasShadow = true
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         isMovableByWindowBackground = false
@@ -102,21 +102,23 @@ class ClipboardOverlayWindow: NSWindow {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
-        let overlayHeight: CGFloat = 320 // Height increased to fit all sidebar icons + chip bar
+        let overlayHeight: CGFloat = 280 // top (10) + tag bar (40) + gap (8) + cards (212) + bottom (10) = 280
+        let horizontalMargin: CGFloat = 8  // Gap from left/right screen edges
+        let bottomMargin: CGFloat = 8      // Gap above the dock (matches horizontal margin)
 
-        // Final position: full width, stuck to bottom
+        // Final position: floating panel with margins on all sides
         finalFrame = NSRect(
-            x: screenFrame.minX,
-            y: screenFrame.minY,
-            width: screenFrame.width,
+            x: screenFrame.minX + horizontalMargin,
+            y: screenFrame.minY + bottomMargin,
+            width: screenFrame.width - horizontalMargin * 2,
             height: overlayHeight
         )
 
-        // Initial position: same width, positioned below screen (for slide-up animation)
+        // Initial position: hidden below screen (for slide-up animation)
         initialFrame = NSRect(
-            x: screenFrame.minX,
-            y: screenFrame.minY - overlayHeight, // Completely hidden below screen
-            width: screenFrame.width,
+            x: screenFrame.minX + horizontalMargin,
+            y: screenFrame.minY - overlayHeight,
+            width: screenFrame.width - horizontalMargin * 2,
             height: overlayHeight
         )
     }

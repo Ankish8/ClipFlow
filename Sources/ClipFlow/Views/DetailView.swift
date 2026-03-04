@@ -34,12 +34,12 @@ struct DetailHeader: View {
                     ContentTypeIcon(content: item.content)
                     Text(item.content.typeDisplayName)
                         .font(.headline)
-                        .foregroundColor(.primary)
+                        .foregroundStyle(.primary)
                 }
 
                 Text("From \(item.source.applicationName ?? "Unknown")")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
@@ -50,7 +50,7 @@ struct DetailHeader: View {
                     viewModel.toggleFavorite(for: item)
                 } label: {
                     Image(systemName: item.isFavorite ? "heart.fill" : "heart")
-                        .foregroundColor(item.isFavorite ? .red : .primary)
+                        .foregroundStyle(item.isFavorite ? .red : .primary)
                 }
                 .help("Toggle Favorite")
 
@@ -58,7 +58,7 @@ struct DetailHeader: View {
                     viewModel.togglePin(for: item)
                 } label: {
                     Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                        .foregroundColor(item.isPinned ? .orange : .primary)
+                        .foregroundStyle(item.isPinned ? .orange : .primary)
                 }
                 .help("Toggle Pin")
 
@@ -70,7 +70,7 @@ struct DetailHeader: View {
                     }
                 } label: {
                     Image(systemName: "wand.and.stars")
-                        .foregroundColor(.primary)
+                        .foregroundStyle(.primary)
                 }
                 .help("Transform and Paste")
 
@@ -78,7 +78,7 @@ struct DetailHeader: View {
                     viewModel.pasteItem(item)
                 } label: {
                     Image(systemName: "doc.on.clipboard")
-                        .foregroundColor(.blue)
+                        .foregroundStyle(.blue)
                 }
                 .help("Paste")
                 .buttonStyle(.borderedProminent)
@@ -142,17 +142,17 @@ struct TextContentView: View {
                     if content.isEmail {
                         Label("Email detected", systemImage: "envelope")
                             .font(.caption)
-                            .foregroundColor(.blue)
+                            .foregroundStyle(.blue)
                     }
                     if content.isPhoneNumber {
                         Label("Phone detected", systemImage: "phone")
                             .font(.caption)
-                            .foregroundColor(.green)
+                            .foregroundStyle(.green)
                     }
                     if content.isURL {
                         Label("URL detected", systemImage: "link")
                             .font(.caption)
-                            .foregroundColor(.orange)
+                            .foregroundStyle(.orange)
                     }
                 }
             }
@@ -162,43 +162,67 @@ struct TextContentView: View {
 
 struct RichTextContentView: View {
     let content: RichTextContent
+    @State private var cachedAttrStr: AttributedString? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Show rich content if available, fallback to plain text
-            if let attributedString = try? NSAttributedString(data: content.attributedStringData, options: [:], documentAttributes: nil) {
-                Text(AttributedString(attributedString))
-                    .textSelection(.enabled)
+            if let attr = cachedAttrStr {
+                Text(attr).textSelection(.enabled)
             } else {
                 Text(content.plainTextFallback)
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
             }
         }
+        .task {
+            let data = content.attributedStringData
+            let result = await Task.detached(priority: .utility) {
+                (try? NSAttributedString(data: data, options: [:], documentAttributes: nil))
+                    .flatMap { AttributedString($0) }
+            }.value
+            cachedAttrStr = result
+        }
     }
 }
 
 struct ImageContentView: View {
     let content: ImageContent
+    @State private var renderedImage: Image? = nil
+
+    private static let byteCountFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        f.countStyle = .file
+        return f
+    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let nsImage = NSImage(data: content.data) {
-                Image(nsImage: nsImage)
+            if let img = renderedImage {
+                img
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: 400, maxHeight: 300)
             } else {
                 Label("Image preview not available", systemImage: "photo")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
 
             HStack {
                 Text("Format: \(content.format)")
-                Text("Size: \(ByteCountFormatter().string(fromByteCount: Int64(content.data.count)))")
+                Text("Size: \(Self.byteCountFormatter.string(fromByteCount: Int64(content.data.count)))")
             }
             .font(.caption)
-            .foregroundColor(.secondary)
+            .foregroundStyle(.secondary)
+        }
+        .task {
+            let data = content.data
+            let nsImage = await Task.detached(priority: .utility) {
+                NSImage(data: data)
+            }.value
+            if let nsImage {
+                renderedImage = Image(nsImage: nsImage)
+            }
         }
     }
 }
@@ -211,7 +235,7 @@ struct FileContentView: View {
             ForEach(Array(content.urls.enumerated()), id: \.offset) { index, url in
                 HStack {
                     Image(systemName: "doc")
-                        .foregroundColor(.orange)
+                        .foregroundStyle(.orange)
                     Text(url.lastPathComponent)
                         .font(.body)
                         .textSelection(.enabled)
@@ -229,9 +253,9 @@ struct LinkContentView: View {
             Link(destination: content.url) {
                 HStack {
                     Image(systemName: "link")
-                        .foregroundColor(.blue)
+                        .foregroundStyle(.blue)
                     Text(content.url.absoluteString)
-                        .foregroundColor(.blue)
+                        .foregroundStyle(.blue)
                         .underline()
                 }
             }
@@ -244,7 +268,7 @@ struct LinkContentView: View {
             if let description = content.description {
                 Text(description)
                     .font(.body)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -258,7 +282,7 @@ struct CodeContentView: View {
             HStack {
                 Text("Language: \(content.language)")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                 Spacer()
             }
 
@@ -283,11 +307,11 @@ struct ColorContentView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("RGB: \(Int(content.red * 255)), \(Int(content.green * 255)), \(Int(content.blue * 255))")
-                    Text("Hex: \(content.hexString)")
+                    Text("Hex: \(content.hexValue)")
                     Text("Alpha: \(content.alpha, specifier: "%.2f")")
                 }
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
             }
         }
     }
@@ -310,7 +334,7 @@ struct SnippetContentView: View {
             if !content.placeholders.isEmpty {
                 Text("Placeholders: \(content.placeholders.map { $0.name }.joined(separator: ", "))")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -333,7 +357,7 @@ struct MultipleContentView: View {
                     }
                     Text(item.displayText)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
                 .padding(8)
@@ -346,6 +370,13 @@ struct MultipleContentView: View {
 struct MetadataFooter: View {
     let item: ClipboardItem
 
+    private static let byteCountFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        f.countStyle = .file
+        return f
+    }()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
@@ -353,7 +384,7 @@ struct MetadataFooter: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Created: \(item.timestamps.createdAt, style: .date) at \(item.timestamps.createdAt, style: .time)")
-                    Text("Size: \(ByteCountFormatter().string(fromByteCount: item.metadata.size))")
+                    Text("Size: \(Self.byteCountFormatter.string(fromByteCount: item.metadata.size))")
                 }
 
                 Spacer()
@@ -365,7 +396,7 @@ struct MetadataFooter: View {
                 }
             }
             .font(.caption2)
-            .foregroundColor(.secondary)
+            .foregroundStyle(.secondary)
         }
     }
 }
@@ -375,16 +406,16 @@ struct EmptyDetailView: View {
         VStack(spacing: 16) {
             Image(systemName: "doc.on.clipboard")
                 .font(.system(size: 48))
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
 
             VStack(spacing: 4) {
                 Text("No Item Selected")
                     .font(.title2)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
 
                 Text("Select an item from the clipboard history to view details")
                     .font(.body)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
         }

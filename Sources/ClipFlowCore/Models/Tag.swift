@@ -82,16 +82,12 @@ public enum TagColor: String, Codable, CaseIterable, Sendable {
 
     /// RGB components for SwiftUI Color
     public var rgbComponents: (red: Double, green: Double, blue: Double) {
-        let hex = String(rawValue.dropFirst()) // Remove #
-        let scanner = Scanner(string: hex)
-        var rgb: UInt64 = 0
-        scanner.scanHexInt64(&rgb)
-
-        let r = Double((rgb & 0xFF0000) >> 16) / 255.0
-        let g = Double((rgb & 0x00FF00) >> 8) / 255.0
-        let b = Double(rgb & 0x0000FF) / 255.0
-
-        return (r, g, b)
+        let intValue = UInt64(String(rawValue.dropFirst()), radix: 16) ?? 0
+        return (
+            Double((intValue & 0xFF0000) >> 16) / 255.0,
+            Double((intValue & 0x00FF00) >> 8) / 255.0,
+            Double(intValue & 0x0000FF) / 255.0
+        )
     }
 }
 

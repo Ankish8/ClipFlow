@@ -38,6 +38,11 @@ struct ClipboardItemsList: View {
 }
 
 struct ClipboardItemRow: View {
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
     let item: ClipboardItem
     let isSelected: Bool
     let viewModel: ClipboardViewModel
@@ -60,14 +65,14 @@ struct ClipboardItemRow: View {
                     // Source application
                     Label(item.source.applicationName ?? "Unknown", systemImage: "app")
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
 
                     Spacer()
 
                     // Timestamp
-                    Text(RelativeDateTimeFormatter().localizedString(for: item.timestamps.createdAt, relativeTo: Date()))
+                    Text(Self.relativeDateFormatter.localizedString(for: item.timestamps.createdAt, relativeTo: Date()))
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
 
             }
@@ -78,13 +83,13 @@ struct ClipboardItemRow: View {
             VStack(spacing: 4) {
                 if item.isPinned {
                     Image(systemName: "pin.fill")
-                        .foregroundColor(.orange)
+                        .foregroundStyle(.orange)
                         .font(.caption)
                 }
 
                 if item.isFavorite {
                     Image(systemName: "heart.fill")
-                        .foregroundColor(.red)
+                        .foregroundStyle(.red)
                         .font(.caption)
                 }
 
@@ -94,10 +99,13 @@ struct ClipboardItemRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.customAccent.opacity(0.2) : Color.clear)
-        )
+        .background {
+            if #available(macOS 26, *) { Color.clear } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.customAccent.opacity(0.2) : Color.clear)
+            }
+        }
+        .glassCard(isSelected: isSelected, cornerRadius: 8)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 }
@@ -108,7 +116,7 @@ struct ContentTypeIcon: View {
 
     var body: some View {
         Image(systemName: iconName)
-            .foregroundColor(iconColor)
+            .foregroundStyle(iconColor)
             .font(.system(size: 16))
     }
 
@@ -188,7 +196,7 @@ struct LoadMoreButton: View {
                 Image(systemName: "arrow.down")
                 Text("Load More")
             }
-            .foregroundColor(.secondary)
+            .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
     }

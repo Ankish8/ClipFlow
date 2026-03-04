@@ -2,60 +2,32 @@ import SwiftUI
 import ClipFlowCore
 
 struct ClipboardOverlayView: View {
-    @ObservedObject var viewModel: ClipboardViewModel
+    let viewModel: ClipboardViewModel
     @State private var selectedIndex: Int = 0
-    @State private var selectedFilter: ContentFilter = .all
     @State private var selectedTagIds: Set<UUID> = []
-    @State private var isDragging: Bool = false
 
     // Search state - managed here for keyboard capture
     @State private var isSearchExpanded = false
     @State private var searchText = ""
 
-    // Track if this is using a shared viewModel
-    private let isSharedViewModel: Bool
+    // PERFORMANCE: Cache filtered items instead of recomputing on every render
+    @State private var filteredItems: [ClipboardItem] = []
 
     // Default initializer creates its own viewModel (for standalone use)
     init() {
-        self.viewModel = ClipboardViewModel()
-        self.isSharedViewModel = false
+        let vm = ClipboardViewModel()
+        vm.initialize()
+        self.viewModel = vm
     }
 
     // Initializer that accepts a shared viewModel (for shared use)
     init(viewModel: ClipboardViewModel) {
         self.viewModel = viewModel
-        self.isSharedViewModel = true
     }
 
-    enum ContentFilter: String, CaseIterable {
-        case all = "All"
-        case text = "Text"
-        case images = "Images"
-        case files = "Files"
-        case links = "Links"
-        case colors = "Colors"
-
-        var icon: String {
-            switch self {
-            case .all: return "square.grid.2x2"
-            case .text: return "doc.text"
-            case .images: return "photo"
-            case .files: return "doc"
-            case .links: return "link"
-            case .colors: return "paintpalette"
-            }
-        }
-    }
-
-    var filteredItems: [ClipboardItem] {
+    // PERFORMANCE: Compute filtered items once and cache the result
+    private func updateFilteredItems() {
         var items = viewModel.items
-
-        // Apply content type filtering
-        if selectedFilter != .all {
-            items = items.filter { item in
-                matches(item.content, filter: selectedFilter)
-            }
-        }
 
         // Apply tag filtering
         if !selectedTagIds.isEmpty {
@@ -64,148 +36,59 @@ struct ClipboardOverlayView: View {
             }
         }
 
-        return items
-    }
-
-
-    private func matches(_ content: ClipboardContent, filter: ContentFilter) -> Bool {
-        switch (content, filter) {
-        case (.text(let textContent), .text):
-            // Don't show hex colors in text filter since they appear as color cards
-            let text = textContent.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return !isHexColor(text)
-        case (.richText, .text), (.code, .text), (.snippet, .text):
-            return true
-        case (.text(let textContent), .colors):
-            // Show hex colors in colors filter
-            let text = textContent.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return isHexColor(text)
-        case (.image, .images):
-            return true
-        case (.file, .files):
-            return true
-        case (.link, .links):
-            return true
-        case (.color, .colors):
-            return true
-        default:
-            return false
-        }
-    }
-
-    private func isHexColor(_ text: String) -> Bool {
-        guard text.hasPrefix("#"), text.count == 7 else { return false }
-        let hexValue = String(text.dropFirst())
-        return Int(hexValue, radix: 16) != nil
+        filteredItems = items
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 0) {
-                // Left sidebar with content type filters only
-                VStack(spacing: 0) {
-                    Spacer()
-                        .frame(minHeight: 20)
+        VStack(spacing: 0) {
+            // Horizontal tag filter bar
+            TagFilterBarView(
+                viewModel: viewModel,
+                selectedTagIds: $selectedTagIds,
+                isSearchExpanded: $isSearchExpanded,
+                searchText: $searchText
+            )
+            .padding(.top, 10)
 
-                    // Content type filters (vertical) - compact spacing
-                    contentTypeFilters
-                        .padding(.horizontal, 10)
+            Spacer().frame(height: 8)
 
-                    Spacer()
-                        .frame(minHeight: 30)
-                }
-                .frame(width: 90)
-
-                // Main content area
-                VStack(spacing: 0) {
-                    // Top spacing for vertical balance
-                    Spacer().frame(height: 12)
-
-                    // Horizontal tag filter bar
-                    TagFilterBarView(
-                        viewModel: viewModel,
-                        selectedTagIds: $selectedTagIds,
-                        isSearchExpanded: $isSearchExpanded,
-                        searchText: $searchText
-                    )
-
-                    // Spacing between tag bar and cards
-                    Spacer().frame(height: 20)
-
-                    // Main cards container - centered and full width
-                    ScrollViewReader { proxy in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 16) {
-                                // Leading spacer for centering
-                                if filteredItems.count <= 6 {
-                                    Spacer().frame(minWidth: 0)
-                                }
-
-                                ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                                    ClipboardCardView(
-                                        item: item,
-                                        index: index + 1,
-                                        isSelected: index == selectedIndex,
-                                        viewModel: viewModel
-                                    )
-                                    .id(item.id)
-                                    .onTapGesture {
-                                        selectItem(index: index)
-                                    }
-                                }
-
-                                // Trailing spacer for centering
-                                if filteredItems.count <= 6 {
-                                    Spacer().frame(minWidth: 0)
-                                }
-                            }
-                            .padding(.horizontal, 32)
-                            .frame(minWidth: geometry.size.width - 90)
-                        }
-                        .frame(height: 220)
-                        .onChange(of: selectedIndex) { newIndex in
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                proxy.scrollTo(newIndex, anchor: .center)
-                            }
-                        }
-                    }
-
-                    // Bottom info bar
-                    bottomInfoBar
+            // Main cards container - full width
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    cardStack
                         .padding(.horizontal, 32)
-
-                    // Bottom padding to stick to screen bottom
-                    Spacer().frame(height: 20)
+                        .frame(maxWidth: .infinity)
+                }
+                .frame(height: 212)
+                .onChange(of: selectedIndex) { newIndex in
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(newIndex, anchor: .center)
+                    }
                 }
             }
+
+            Spacer().frame(height: 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // REMOVED: .opacity(isDragging ? 0.0 : 1.0) - was hiding entire overlay during drag
-        // Drag preview is handled by SwiftUI's .draggable modifier
         .background(overlayBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 28))
         .onAppear {
-            // Only initialize if this is a standalone viewModel (not shared)
-            if !isSharedViewModel {
-                viewModel.initialize()
-            }
+            updateFilteredItems()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .startDragging)) { _ in
-            isDragging = true
+        .onChange(of: selectedTagIds) {
+            updateFilteredItems()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .stopDragging)) { _ in
-            isDragging = false
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.keyboardShortcutNotification)) { _ in
-            handleKeyboardInput()
+        .onChange(of: viewModel.items) {
+            updateFilteredItems()
         }
         .focusable()
         .onKeyPress { press in
             // Auto-expand search when user starts typing
             if !isSearchExpanded && press.characters.count == 1 && !press.characters.isEmpty {
                 let char = press.characters
-                // Only capture alphanumeric and common punctuation
-                if char.rangeOfCharacter(from: CharacterSet.alphanumerics) != nil || char.rangeOfCharacter(from: CharacterSet.punctuationCharacters) != nil || char == " " {
-                    NSLog("🔍 Auto-expanding search with character: '\(char)'")
+                if char.rangeOfCharacter(from: CharacterSet.alphanumerics) != nil
+                    || char.rangeOfCharacter(from: CharacterSet.punctuationCharacters) != nil
+                    || char == " " {
                     isSearchExpanded = true
                     searchText = char
                     return .handled
@@ -215,20 +98,15 @@ struct ClipboardOverlayView: View {
         }
     }
 
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorScheme) private var colorScheme
 
     private var overlayBackground: some View {
         ZStack {
-            // Frosted glass blur effect (adapts automatically to light/dark mode)
-            VisualEffectView(
-                material: .hudWindow,
-                blendingMode: .behindWindow
-            )
+            // Frosted glass blur effect
+            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
 
-            // Subtle tinted overlay for depth (light in light mode, dark in dark mode)
-            (colorScheme == .light ?
-                Color.white.opacity(0.25) :
-                Color.black.opacity(0.35))
+            // Subtle tinted overlay for depth
+            (colorScheme == .light ? Color.white.opacity(0.25) : Color.black.opacity(0.35))
 
             // Center glow to lift the card area
             RadialGradient(
@@ -247,15 +125,9 @@ struct ClipboardOverlayView: View {
             // Edge vignette for frosted glass depth
             LinearGradient(
                 colors: colorScheme == .light ? [
-                    Color.black.opacity(0.08),
-                    Color.clear,
-                    Color.clear,
-                    Color.black.opacity(0.08)
+                    Color.black.opacity(0.08), Color.clear, Color.clear, Color.black.opacity(0.08)
                 ] : [
-                    Color.black.opacity(0.15),
-                    Color.clear,
-                    Color.clear,
-                    Color.black.opacity(0.15)
+                    Color.black.opacity(0.15), Color.clear, Color.clear, Color.black.opacity(0.15)
                 ],
                 startPoint: .leading,
                 endPoint: .trailing
@@ -265,61 +137,41 @@ struct ClipboardOverlayView: View {
         .ignoresSafeArea()
     }
 
-    private var bottomInfoBar: some View {
-        HStack {
-            Text("\(filteredItems.count) items")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.secondary)
+    // MARK: - Card Stack (extracted for GlassEffectContainer wrapping)
 
-            Spacer()
-        }
-        .padding(.vertical, 12)
-    }
-
-    private var contentTypeFilters: some View {
-        VStack(spacing: 8) {
-            ForEach(ContentFilter.allCases, id: \.self) { filter in
-                filterButton(for: filter)
+    @ViewBuilder
+    private var cardStack: some View {
+        if #available(macOS 26, *) {
+            GlassEffectContainer(spacing: 16) {
+                cardStackContent
             }
+        } else {
+            cardStackContent
         }
     }
 
-    private func filterButton(for filter: ContentFilter) -> some View {
-        Button(action: {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                selectedFilter = filter
-                selectedIndex = 0 // Reset selection when filter changes
+    private var cardStackContent: some View {
+        LazyHStack(spacing: 16) {
+            if filteredItems.count <= 6 {
+                Spacer().frame(minWidth: 0)
             }
-        }) {
-            VStack(spacing: 3) {
-                Image(systemName: filter.icon)
-                    .font(.system(size: 14, weight: selectedFilter == filter ? .semibold : .medium))
-                    .foregroundColor(selectedFilter == filter ? (colorScheme == .dark ? .white : .primary) : .secondary)
-
-                Text(filter.rawValue)
-                    .font(.system(size: 9, weight: selectedFilter == filter ? .semibold : .medium))
-                    .foregroundColor(selectedFilter == filter ? .primary : .secondary.opacity(0.8))
-                    .lineLimit(1)
+            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
+                ClipboardCardView(
+                    item: item,
+                    index: index + 1,
+                    isSelected: index == selectedIndex,
+                    viewModel: viewModel
+                )
+                .id(item.id)
+                .onTapGesture {
+                    selectItem(index: index)
+                }
             }
-            .frame(width: 72, height: 40)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(selectedFilter == filter ?
-                        Color.customAccent.opacity(0.12) :
-                        Color.primary.opacity(0.03))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(selectedFilter == filter ?
-                                Color.customAccent.opacity(0.2) :
-                                Color.primary.opacity(0.08),
-                                lineWidth: selectedFilter == filter ? 1.5 : 0.5)
-                    )
-            )
+            if filteredItems.count <= 6 {
+                Spacer().frame(minWidth: 0)
+            }
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
     }
-
 
     private func selectItem(index: Int) {
         selectedIndex = index
@@ -328,15 +180,13 @@ struct ClipboardOverlayView: View {
     private func selectAndPaste(_ item: ClipboardItem, index: Int) {
         selectedIndex = index
         viewModel.pasteItem(item)
-        // Close overlay after pasting
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         }
     }
 
     private func handleKeyboardInput() {
-        // This will be called from the window's keyDown events
-        // The actual implementation is in the window class
+        // Called from the window's keyDown events
     }
 
     func closeOverlay() {
@@ -346,19 +196,15 @@ struct ClipboardOverlayView: View {
     // MARK: - Keyboard Navigation Methods
 
     func navigateLeft() {
-        if selectedIndex > 0 {
-            selectedIndex -= 1
-        }
+        if selectedIndex > 0 { selectedIndex -= 1 }
     }
 
     func navigateRight() {
-        if selectedIndex < filteredItems.count - 1 {
-            selectedIndex += 1
-        }
+        if selectedIndex < filteredItems.count - 1 { selectedIndex += 1 }
     }
 
     func selectByNumber(_ number: Int) {
-        let index = number - 1 // Convert 1-based to 0-based
+        let index = number - 1
         if index >= 0 && index < filteredItems.count {
             selectedIndex = index
         }
@@ -366,21 +212,16 @@ struct ClipboardOverlayView: View {
 
     func pasteCurrentSelection() {
         guard selectedIndex < filteredItems.count else { return }
-        let item = filteredItems[selectedIndex]
-        selectAndPaste(item, index: selectedIndex)
+        selectAndPaste(filteredItems[selectedIndex], index: selectedIndex)
     }
 
     func deleteCurrentSelection() {
         guard selectedIndex < filteredItems.count else { return }
-        let item = filteredItems[selectedIndex]
-        viewModel.deleteItem(item)
-
-        // Adjust selection if needed
+        viewModel.deleteItem(filteredItems[selectedIndex])
         if selectedIndex >= filteredItems.count && selectedIndex > 0 {
             selectedIndex -= 1
         }
     }
-
 }
 
 // Visual effect view for blur
@@ -393,6 +234,10 @@ struct VisualEffectView: NSViewRepresentable {
         view.material = material
         view.blendingMode = blendingMode
         view.state = .active
+        // Mask the blur layer itself so it respects rounded corners
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 20
+        view.layer?.masksToBounds = true
         return view
     }
 

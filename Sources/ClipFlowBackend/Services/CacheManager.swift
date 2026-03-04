@@ -73,11 +73,7 @@ public actor CacheManager {
     }
 
     public func getCachedItem(for hash: String) async -> ClipboardItem? {
-        // Check hash cache first
-        guard let uuid = hashCache[hash] else {
-            return await getItem(id: UUID()) // This will miss and check disk
-        }
-
+        guard let uuid = hashCache[hash] else { return nil }
         return await getItem(id: uuid)
     }
 

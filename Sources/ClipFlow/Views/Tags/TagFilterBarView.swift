@@ -5,7 +5,7 @@ import Combine
 
 /// Main tag filter bar view - replaces AppChipBarView
 struct TagFilterBarView: View {
-    @ObservedObject var viewModel: ClipboardViewModel
+    var viewModel: ClipboardViewModel
     @Binding var selectedTagIds: Set<UUID>
     @Binding var isSearchExpanded: Bool
     @Binding var searchText: String
@@ -23,11 +23,35 @@ struct TagFilterBarView: View {
     // Tag order persistence
     private let tagOrderKey = "tagOrderPreference"
 
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            chipRow
+        }
+        .frame(height: 40)
+        .scrollClipDisabled()
+        .background(Color.clear)
+        .onAppear {
+            loadTags()
+            calculateItemCounts()
+            setupSubscriptions()
+        }
+    }
+
+    @ViewBuilder
+    private var chipRow: some View {
+        if #available(macOS 26, *) {
+            GlassEffectContainer(spacing: 8) {
+                chipRowContent
+            }
+        } else {
+            chipRowContent
+        }
+    }
+
+    private var chipRowContent: some View {
+        HStack(spacing: 8) {
                 // "Clipboard History" chip to show all items
                 clipboardHistoryChip
 
@@ -91,16 +115,6 @@ struct TagFilterBarView: View {
                 )
             }
             .padding(.horizontal, 32)
-        }
-        .frame(height: 32)
-        .onAppear {
-            loadTags()
-            calculateItemCounts()
-            setupSubscriptions()
-        }
-        .onChange(of: viewModel.items) { _ in
-            calculateItemCounts()
-        }
     }
 
     // MARK: - Clipboard History Chip
@@ -116,23 +130,22 @@ struct TagFilterBarView: View {
                 Text("Clipboard History")
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             }
-            .foregroundColor(isSelected ? .white : .secondary)
+            .foregroundStyle(isSelected ? .white : .secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(isSelected ?
-                        Color.customAccent :
-                        Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12)
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(isSelected ?
-                                Color.customAccent.opacity(0.3) :
-                                Color.primary.opacity(0.15),
-                                lineWidth: isSelected ? 0 : 0.5)
-                    )
-            )
+            // Fallback background for macOS < 26
+            .background {
+                if #available(macOS 26, *) { Color.clear } else {
+                    Capsule()
+                        .fill(isSelected ? Color.customAccent : Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12))
+                        .overlay(
+                            Capsule().stroke(isSelected ? Color.customAccent.opacity(0.3) : Color.primary.opacity(0.15),
+                                             lineWidth: isSelected ? 0 : 0.5)
+                        )
+                }
+            }
+            // Liquid Glass on macOS 26+
+            .glassChip(tint: isSelected ? Color.customAccent.opacity(0.5) : nil)
         }
         .buttonStyle(PlainButtonStyle())
         .focusEffectDisabled()
@@ -300,11 +313,14 @@ struct TagFilterBarView: View {
         // Add tag to the dropped item
         viewModel.addTagToItem(tagId: tag.id, itemId: itemId)
 
-        // Update item count for this tag
-        calculateItemCounts()
+        // PERFORMANCE: Removed calculateItemCounts() - it's O(n*m) and too expensive
+        // Item counts update when tags are loaded or modified via subscriptions
 
         // Visual feedback
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+
+        // Optimistically increment count for this tag (instant visual feedback)
+        tagItemCounts[tag.id] = (tagItemCounts[tag.id] ?? 0) + 1
     }
 
     // MARK: - Tag Reordering
@@ -382,15 +398,6 @@ struct TagFilterBarView: View {
             }
             .store(in: &subscriptionHolder.cancellables)
 
-        // Subscribe to tags loaded
-        TagService.shared.tagsLoaded
-            .receive(on: DispatchQueue.main)
-            .sink { [self] loadedTags in
-                tags = loadedTags
-                applySavedTagOrder()
-                calculateItemCounts()
-            }
-            .store(in: &subscriptionHolder.cancellables)
     }
 }
 
@@ -398,7 +405,7 @@ struct TagFilterBarView: View {
 
 #Preview {
     struct PreviewWrapper: View {
-        @StateObject private var viewModel = ClipboardViewModel()
+        @State private var viewModel = ClipboardViewModel()
         @State private var selectedTagIds: Set<UUID> = []
         @State private var isSearchExpanded = false
         @State private var searchText = ""
@@ -416,7 +423,7 @@ struct TagFilterBarView: View {
                 Spacer()
 
                 Text("Selected tags: \(selectedTagIds.count)")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
             .frame(height: 200)
         }

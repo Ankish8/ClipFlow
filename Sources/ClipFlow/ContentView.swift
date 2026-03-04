@@ -6,7 +6,7 @@ import ClipFlowBackend
 import KeyboardShortcuts
 
 struct ContentView: View {
-    @StateObject private var viewModel = ClipboardViewModel()
+    @State private var viewModel = ClipboardViewModel()
     @State private var searchText = ""
     @State private var selectedItem: ClipboardItem?
 

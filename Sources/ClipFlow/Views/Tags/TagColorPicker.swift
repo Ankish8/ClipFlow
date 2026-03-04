@@ -6,7 +6,7 @@ struct TagColorPicker: View {
     @Binding var selectedColor: TagColor
     let onColorSelected: ((TagColor) -> Void)?
 
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorScheme) private var colorScheme
 
     init(selectedColor: Binding<TagColor>, onColorSelected: ((TagColor) -> Void)? = nil) {
         self._selectedColor = selectedColor
@@ -17,7 +17,7 @@ struct TagColorPicker: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Tag Color")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
 
             LazyVGrid(columns: [
                 GridItem(.adaptive(minimum: 32), spacing: 8)
@@ -36,8 +36,7 @@ struct TagColorPicker: View {
 
     private func colorButton(for color: TagColor) -> some View {
         let isSelected = selectedColor == color
-        let (r, g, b) = color.rgbComponents
-        let swiftUIColor = Color(red: r, green: g, blue: b)
+        let swiftUIColor = color.swiftUIColor
 
         return Button(action: {
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -55,7 +54,7 @@ struct TagColorPicker: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                 }
 
@@ -92,8 +91,7 @@ struct TagColorPickerMenu: View {
         HStack(spacing: 6) {
             ForEach(TagColor.allCases, id: \.self) { color in
                 let isSelected = selectedColor == color
-                let (r, g, b) = color.rgbComponents
-                let swiftUIColor = Color(red: r, green: g, blue: b)
+                let swiftUIColor = color.swiftUIColor
 
                 Button(action: {
                     selectedColor = color

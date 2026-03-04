@@ -8,16 +8,27 @@ struct ClipboardCardView: View {
     let index: Int
     let isSelected: Bool
     let viewModel: ClipboardViewModel
+    private let contentTypeInfo: ContentTypeInfo
+
     @State private var cachedImagePath: String? = nil
     @State private var showCopyFeedback = false
-    @State private var accentColor: Color? = nil
-    @State private var itemTags: [Tag] = []
-    @State private var allTags: [Tag] = []
     @State private var showTagMenu = false
     @State private var showNewTagCreator = false
 
-    private var contentTypeInfo: ContentTypeInfo {
-        ContentTypeInfo.from(item.content)
+    // PERFORMANCE: Cache computed tags instead of filtering on every render
+    @State private var itemTags: [Tag] = []
+    @State private var allTags: [Tag] = []
+
+    // PERFORMANCE: Cache icon conversion - NSImage(data:) is EXPENSIVE!
+    // This prevents 10-15 conversions per filter change
+    @State private var cachedAppIcon: Image? = nil
+
+    init(item: ClipboardItem, index: Int, isSelected: Bool, viewModel: ClipboardViewModel) {
+        self.item = item
+        self.index = index
+        self.isSelected = isSelected
+        self.viewModel = viewModel
+        self.contentTypeInfo = ContentTypeInfo.from(item.content)
     }
 
     var body: some View {
@@ -37,8 +48,11 @@ struct ClipboardCardView: View {
             // Metadata footer
             cardFooter
         }
-        .frame(width: cardWidth, height: 250)
-        .background(cardBackground)
+        .frame(width: cardWidth, height: 210)
+        // Fallback background on macOS < 26; glassCard() takes over on macOS 26+
+        .background {
+            if #available(macOS 26, *) { Color.clear } else { cardBackground }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -47,6 +61,7 @@ struct ClipboardCardView: View {
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
+        .glassCard(isSelected: isSelected)
         .onDrag {
             NSLog("🎯 DRAG: Starting drag for item: \(item.id.uuidString)")
             let provider = NSItemProvider()
@@ -204,15 +219,27 @@ struct ClipboardCardView: View {
             // Double-click to paste and hide overlay
             pasteAndHideOverlay()
         }
-        .onTapGesture {
-            // Single-click to copy
-            copyItem()
-        }
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                copyItem()
+            }
+        )
         .contextMenu {
             cardContextMenu
         }
         .onAppear {
-            loadTags()
+            // PERFORMANCE: Cache tags once on appear instead of computing every render
+            allTags = TagService.shared.getAllTags()
+            itemTags = allTags.filter { item.tagIds.contains($0.id) }
+
+            // PERFORMANCE: NSImage(data:) decodes TIFF with multiple resolutions — move off main thread
+            if let iconData = item.source.applicationIcon {
+                Task.detached(priority: .utility) {
+                    let image = NSImage(data: iconData).map { Image(nsImage: $0) }
+                    await MainActor.run { cachedAppIcon = image }
+                }
+            }
+
             // Create temporary file for images asynchronously to avoid blocking main thread during drag
             if case .image(let imageContent) = item.content {
                 Task.detached(priority: .utility) {
@@ -223,11 +250,6 @@ struct ClipboardCardView: View {
                     }
                 }
             }
-
-            // Extract dominant color from app icon for card theming
-            Task {
-                await extractAccentColor()
-            }
         }
     }
 
@@ -235,7 +257,7 @@ struct ClipboardCardView: View {
         return 235  // Uniform width for all card types
     }
 
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorScheme) private var colorScheme
 
     private var cardBackground: some View {
         ZStack {
@@ -258,23 +280,6 @@ struct ClipboardCardView: View {
                     lineWidth: 1
                 )
 
-            // Subtle colored accent border (inner border)
-            if let accentColor = accentColor {
-                RoundedRectangle(cornerRadius: 11.5)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                accentColor.opacity(0.20),
-                                accentColor.opacity(0.12),
-                                accentColor.opacity(0.20)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.5
-                    )
-                    .padding(0.5) // Inset slightly from outer border
-            }
         }
     }
 
@@ -284,7 +289,7 @@ struct ClipboardCardView: View {
                 // Subtle content type badge
                 Text(contentTypeInfo.name.uppercased())
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(contentTypeInfo.color)
+                    .foregroundStyle(contentTypeInfo.color)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
@@ -345,7 +350,7 @@ struct ClipboardCardView: View {
                 // Metadata - exact colors from HTML reference
                 Text(metadataText)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(colorScheme == .light ?
+                    .foregroundStyle(colorScheme == .light ?
                         Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) : // #94a3b8
                         Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
                     )
@@ -355,7 +360,7 @@ struct ClipboardCardView: View {
                 // Timestamp - exact colors from HTML reference
                 Text(timeAgoText)
                     .font(.system(size: 11))
-                    .foregroundColor(colorScheme == .light ?
+                    .foregroundStyle(colorScheme == .light ?
                         Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) : // #94a3b8
                         Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
                     )
@@ -392,19 +397,27 @@ struct ClipboardCardView: View {
         }
     }
 
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     private var timeAgoText: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: item.timestamps.createdAt, relativeTo: Date())
+        Self.relativeDateFormatter.localizedString(for: item.timestamps.createdAt, relativeTo: Date())
     }
     
     
 
+    private static let byteCountFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        f.countStyle = .file
+        return f
+    }()
+
     private func formatFileSize(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
+        Self.byteCountFormatter.string(fromByteCount: bytes)
     }
 
     // MARK: - Action Methods
@@ -449,92 +462,6 @@ struct ClipboardCardView: View {
 
     // MARK: - Drag and Drop Support
 
-    /// Provides NSItemProvider for tagging via drag-and-drop
-    private func provideDragDataForTagging() -> NSItemProvider {
-        // For tagging, provide the item ID as a string
-        return NSItemProvider(object: item.id.uuidString as NSString)
-    }
-
-    /// Provides NSItemProvider for drag-and-drop with proper file handling
-    private func provideDragData() -> NSItemProvider {
-        switch item.content {
-        case .image(_):
-            // For images, use the pre-cached file path (created async in onAppear)
-            // This provides instant drag with zero latency
-            if let cachedPath = cachedImagePath {
-                let fileURL = URL(fileURLWithPath: cachedPath)
-                let provider = NSItemProvider(contentsOf: fileURL)!
-                return provider
-            } else {
-                // Fallback if cache isn't ready yet (shouldn't happen)
-                return NSItemProvider(object: "[Image]" as NSString)
-            }
-
-        default:
-            // For text and other types, provide string data
-            return NSItemProvider(object: dragData as NSString)
-        }
-    }
-
-    private var dragData: String {
-        switch item.content {
-        case .text(let textContent):
-            return textContent.plainText
-        case .richText(let richContent):
-            return richContent.plainTextFallback
-        case .image(_):
-            // For images, use cached temporary file path or fallback to description
-            return cachedImagePath ?? "[Image: \(item.metadata.preview ?? "Untitled")]"
-        case .file(let fileContent):
-            // For files, return the file paths as text
-            return fileContent.urls.map { $0.path }.joined(separator: "\n")
-        case .link(let linkContent):
-            return linkContent.url.absoluteString
-        case .code(let codeContent):
-            return codeContent.code
-        case .color(let colorContent):
-            return colorContent.hexValue
-        case .snippet(let snippetContent):
-            return snippetContent.content
-        case .multiple(let multiContent):
-            // For multiple items, return the first text-like item
-            for subItem in multiContent.items {
-                switch subItem {
-                case .text(let textContent):
-                    return textContent.plainText
-                case .richText(let richContent):
-                    return richContent.plainTextFallback
-                case .link(let linkContent):
-                    return linkContent.url.absoluteString
-                case .code(let codeContent):
-                    return codeContent.code
-                case .color(let colorContent):
-                    return colorContent.hexValue
-                default:
-                    continue
-                }
-            }
-            return "Multiple items"
-        }
-    }
-
-    private func createTemporaryImageFile(from imageContent: ImageContent) -> String? {
-        do {
-            // Create temporary directory
-            let tempDir = FileManager.default.temporaryDirectory
-            let tempFileName = "\(item.id.uuidString).\(imageContent.format.rawValue)"
-            let tempURL = tempDir.appendingPathComponent(tempFileName)
-
-            // Write image data to temporary file
-            try imageContent.data.write(to: tempURL)
-
-            return tempURL.path
-        } catch {
-            print("Failed to create temporary image file: \(error)")
-            return nil
-        }
-    }
-
     private func createTemporaryImageFileAsync(from imageContent: ImageContent) async -> String? {
         return await Task(priority: .utility) {
             do {
@@ -554,106 +481,34 @@ struct ClipboardCardView: View {
         }.value
     }
 
-    private var dragPreview: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // Type badge
-            Text(contentTypeInfo.name.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(contentTypeInfo.color)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(contentTypeInfo.color.opacity(0.15))
-                )
-
-            // Content preview
-            Text(dragPreviewText)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-
-            // Drag indicator
-            HStack {
-                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Text("Drag to paste")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-        }
-        .padding(12)
-        .frame(width: 200)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.ultraThickMaterial)
-                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-        )
-    }
-
-    private var dragPreviewText: String {
-        let text = dragData
-        let maxLength = 60
-        return text.count > maxLength ?
-            String(text.prefix(maxLength)) + "..." :
-            text
-    }
-
     // MARK: - Source App Icon
 
-    /// Converts stored icon Data (TIFF format) to SwiftUI Image
-    private func iconImage(from data: Data) -> Image? {
-        guard let nsImage = NSImage(data: data) else { return nil }
-        return Image(nsImage: nsImage)
-    }
-
     /// App icon badge view showing the source application
+    /// PERFORMANCE: Uses cached icon to avoid repeated NSImage(data:) conversions
     private var appIconBadge: some View {
         Group {
-            if let iconData = item.source.applicationIcon {
-                // Debug logging for icon data
-                let _ = NSLog("🎯 App icon data - BundleID: \(item.source.applicationBundleID ?? "nil"), Name: \(item.source.applicationName ?? "nil"), Icon size: \(iconData.count) bytes")
-
-                if let iconImage = iconImage(from: iconData) {
-                    iconImage
-                        .resizable()
-                        .interpolation(.high)
-                        .antialiased(true)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 28, height: 28)
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(colorScheme == .light ?
-                                    Color.white.opacity(0.8) :
-                                    Color.black.opacity(0.4),
-                                    lineWidth: 1.5
-                                )
-                        )
-                } else {
-                    let _ = NSLog("❌ Failed to convert icon data to NSImage for: \(item.source.applicationName ?? "Unknown")")
-                    // Fallback when icon data exists but conversion fails
-                    Image(systemName: "app.badge")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(colorScheme == .light ?
-                            Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) :
-                            Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
-                        )
-                        .frame(width: 22, height: 22)
-                }
+            if let cachedIcon = cachedAppIcon {
+                // Use cached icon - FAST!
+                cachedIcon
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(colorScheme == .light ?
+                                Color.white.opacity(0.8) :
+                                Color.black.opacity(0.4),
+                                lineWidth: 1.5
+                            )
+                    )
             } else {
-                let _ = NSLog("⚠️ No icon data for app: \(item.source.applicationName ?? "Unknown"), BundleID: \(item.source.applicationBundleID ?? "nil")")
-                // Fallback to SF Symbol if no app icon available
+                // Fallback to SF Symbol if no icon cached
                 Image(systemName: "app.badge")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(colorScheme == .light ?
+                    .foregroundStyle(colorScheme == .light ?
                         Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) :
                         Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
                     )
@@ -668,10 +523,9 @@ struct ClipboardCardView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(itemTags.prefix(2)) { tag in
-                    let (r, g, b) = tag.color.rgbComponents
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(Color(red: r, green: g, blue: b))
+                            .fill(tag.color.swiftUIColor)
                             .frame(width: 8, height: 8)
                             .overlay(
                                 Circle()
@@ -680,20 +534,20 @@ struct ClipboardCardView: View {
 
                         Text(tag.name)
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.primary)
+                            .foregroundStyle(.primary)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(
                         Capsule()
-                            .fill(Color(red: r, green: g, blue: b).opacity(0.15))
+                            .fill(tag.color.swiftUIColor.opacity(0.15))
                     )
                 }
 
                 if itemTags.count > 2 {
                     Text("+\(itemTags.count - 2)")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                 }
@@ -729,9 +583,8 @@ struct ClipboardCardView: View {
                             }
                             Text(tag.name)
                             Spacer()
-                            let (r, g, b) = tag.color.rgbComponents
                             Circle()
-                                .fill(Color(red: r, green: g, blue: b))
+                                .fill(tag.color.swiftUIColor)
                                 .frame(width: 10, height: 10)
                         }
                     }
@@ -770,70 +623,14 @@ struct ClipboardCardView: View {
 
     // MARK: - Tag Management
 
-    private func loadTags() {
-        allTags = TagService.shared.getAllTags()
-
-        Task {
-            let tags = await viewModel.getTagsForItem(itemId: item.id)
-            await MainActor.run {
-                itemTags = tags
-            }
-        }
-    }
-
     private func toggleTag(_ tag: Tag) {
         if itemTags.contains(where: { $0.id == tag.id }) {
-            // Remove tag
             viewModel.removeTagFromItem(tagId: tag.id, itemId: item.id)
             itemTags.removeAll { $0.id == tag.id }
         } else {
-            // Add tag
             viewModel.addTagToItem(tagId: tag.id, itemId: item.id)
             itemTags.append(tag)
         }
-    }
-
-    // MARK: - Color Extraction
-
-    /// Extracts accent color from app icon for card theming
-    private func extractAccentColor() async {
-        let appName = item.source.applicationName ?? "Unknown"
-        NSLog("🎨 Starting color extraction for: \(appName)")
-
-        // Check cache first
-        if let bundleID = item.source.applicationBundleID {
-            if let cachedColor = await AppIconColorCache.shared.getColor(for: bundleID) {
-                NSLog("✅ Using cached color for: \(appName)")
-                accentColor = cachedColor
-                return
-            }
-        }
-
-        // Extract color from icon data
-        guard let iconData = item.source.applicationIcon else {
-            NSLog("⚠️ No icon data to extract color from for: \(appName)")
-            return
-        }
-
-        guard let nsImage = NSImage(data: iconData) else {
-            NSLog("❌ Failed to create NSImage from icon data for: \(appName)")
-            return
-        }
-
-        guard let extractedColor = nsImage.extractDominantColor() else {
-            NSLog("❌ Failed to extract dominant color for: \(appName)")
-            return
-        }
-
-        NSLog("✅ Successfully extracted color for: \(appName)")
-
-        // Cache the extracted color
-        if let bundleID = item.source.applicationBundleID {
-            await AppIconColorCache.shared.setColor(extractedColor, for: bundleID)
-        }
-
-        accentColor = extractedColor
-        NSLog("🎨 Applied accent color to card for: \(appName)")
     }
 }
 

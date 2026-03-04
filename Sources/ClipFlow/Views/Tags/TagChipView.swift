@@ -21,7 +21,7 @@ struct TagChipView: View {
     @State private var displayName = ""  // Optimistic UI update
     @State private var selectedColorForEdit: TagColor  // Current color being edited
     @FocusState private var isTextFieldFocused: Bool
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorScheme) private var colorScheme
 
     init(
         tag: Tag,
@@ -75,7 +75,7 @@ struct TagChipView: View {
                 TextField("", text: $editingName)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .focused($isTextFieldFocused)
                     .onSubmit {
                         saveRename()
@@ -89,7 +89,7 @@ struct TagChipView: View {
                 Text(displayName)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
                     .lineLimit(1)
-                    .foregroundColor(textColor)
+                    .foregroundStyle(textColor)
                     .onTapGesture(count: 2) {
                         startRename()
                     }
@@ -104,7 +104,7 @@ struct TagChipView: View {
             if itemCount > 0 && !isRenaming {
                 Text("\(itemCount)")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(badgeTextColor)
+                    .foregroundStyle(badgeTextColor)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(
@@ -115,35 +115,35 @@ struct TagChipView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(chipBackground)
-        .overlay(chipBorder)
+        // Fallback styling for macOS < 26
+        .background {
+            if #available(macOS 26, *) { Color.clear } else { chipBackground }
+        }
+        .overlay {
+            if #available(macOS 26, *) { } else { chipBorder }
+        }
+        // Liquid Glass on macOS 26+: tint by tag colour when selected or drop-targeted
+        .glassChip(tint: (isSelected || isDropTarget) ? tagColor.opacity(isDropTarget ? 0.5 : 0.35) : nil)
         .onHover { hovering in
             isHovering = hovering
         }
-        .dropDestination(for: Data.self) { items, location in
-            NSLog("🎯 DROP: TagChipView '\(tag.name)' received \(items.count) data items")
-            guard let itemData = items.first else {
-                NSLog("❌ DROP: No data items")
-                return false
+        .onDrop(of: [UTType.clipboardItemID.identifier], isTargeted: $isDropTarget) { providers in
+            guard let provider = providers.first else { return false }
+
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.clipboardItemID.identifier) { data, error in
+                guard error == nil,
+                      let data = data,
+                      let itemIdString = String(data: data, encoding: .utf8),
+                      let itemId = UUID(uuidString: itemIdString) else { return }
+
+                DispatchQueue.main.async {
+                    onDrop?(itemId)
+                }
             }
-            guard let itemIdString = String(data: itemData, encoding: .utf8) else {
-                NSLog("❌ DROP: Failed to decode data to string")
-                return false
-            }
-            NSLog("🎯 DROP: Item ID string: \(itemIdString)")
-            guard let itemId = UUID(uuidString: itemIdString) else {
-                NSLog("❌ DROP: Invalid UUID: \(itemIdString)")
-                return false
-            }
-            NSLog("✅ DROP: Calling onDrop for '\(tag.name)' with item \(itemId)")
-            onDrop?(itemId)
             return true
-        } isTargeted: { isTargeted in
-            NSLog("🎯 DROP TARGET: '\(tag.name)' isTargeted = \(isTargeted)")
-            isDropTarget = isTargeted
         }
         .help(tag.name)
-        .onChange(of: tag.name) { newName in
+        .onChange(of: tag.name) { _, newName in
             // Sync displayName when tag is updated from parent
             if !isRenaming {
                 displayName = newName
@@ -153,10 +153,7 @@ struct TagChipView: View {
 
     // MARK: - Color Computations
 
-    private var tagColor: Color {
-        let (r, g, b) = tag.color.rgbComponents
-        return Color(red: r, green: g, blue: b)
-    }
+    private var tagColor: Color { tag.color.swiftUIColor }
 
     private var textColor: Color {
         if isSelected {

@@ -57,24 +57,22 @@ public extension String {
         return Double(urlLikeLines.count) / Double(lines.count) >= 0.5
     }
 
+    private nonisolated(unsafe) static let emailPredicate = NSPredicate(format: "SELF MATCHES[c] %@", "^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$")
+    private nonisolated(unsafe) static let phonePredicate = NSPredicate(format: "SELF MATCHES %@", "^[\\+]?[1-9]?[0-9]{7,15}$")
+    private nonisolated(unsafe) static let colorRegex = try! NSRegularExpression(pattern: "^#(?:[0-9a-fA-F]{2}){3,4}$")
+
     var isValidEmail: Bool {
-        let emailRegex = "^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$"
-        let emailTest = NSPredicate(format:"SELF MATCHES[c] %@", emailRegex)
-        return emailTest.evaluate(with: self)
+        String.emailPredicate.evaluate(with: self)
     }
 
     var isValidPhoneNumber: Bool {
-        let phoneRegex = "^[\\+]?[1-9]?[0-9]{7,15}$"
-        let phoneTest = NSPredicate(format: "SELF MATCHES %@", phoneRegex)
         let cleanedPhone = self.replacingOccurrences(of: "[^0-9+]", with: "", options: .regularExpression)
-        return phoneTest.evaluate(with: cleanedPhone) && cleanedPhone.count >= 7
+        return String.phonePredicate.evaluate(with: cleanedPhone) && cleanedPhone.count >= 7
     }
 
     var isValidColor: Bool {
-        // Use Macboard's proven regex approach for hex colors
-        guard let regex = try? NSRegularExpression(pattern: "^#(?:[0-9a-fA-F]{2}){3,4}$") else { return false }
         let range = NSRange(location: 0, length: self.utf16.count)
-        return regex.firstMatch(in: self, options: [], range: range) != nil
+        return String.colorRegex.firstMatch(in: self, options: [], range: range) != nil
     }
 
     var isNum: Bool {

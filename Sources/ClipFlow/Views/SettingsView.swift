@@ -60,7 +60,7 @@ struct GeneralSettingsView: View {
                         Stepper(value: $maxHistoryItems, in: 10...1000, step: 10) {
                             Text("\(maxHistoryItems)")
                                 .frame(width: 50, alignment: .trailing)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                     }
 
@@ -81,7 +81,7 @@ struct GeneralSettingsView: View {
 
                             Text("\(String(format: "%.2f", pollingInterval))s")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -117,7 +117,7 @@ struct AdvancedSettingsView: View {
                     Spacer()
                     Stepper(value: $autoDeleteAfterDays, in: 1...365, step: 1) {
                         Text("\(autoDeleteAfterDays) days")
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 }
             } header: {
@@ -132,7 +132,7 @@ struct AdvancedSettingsView: View {
                     Text("~/Library/Application Support/ClipFlow/")
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
 
                     HStack {
                         Button("Reveal in Finder") {
@@ -181,7 +181,7 @@ struct AboutSettingsView: View {
         VStack(spacing: 20) {
             Image(systemName: "doc.on.clipboard")
                 .font(.system(size: 64))
-                .foregroundColor(.customAccent)
+                .foregroundStyle(Color.customAccent)
 
             VStack(spacing: 4) {
                 Text("ClipFlow")
@@ -190,11 +190,11 @@ struct AboutSettingsView: View {
 
                 Text("Advanced Clipboard Manager")
                     .font(.title3)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
 
                 Text("Version 1.0.0")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
 
             VStack(spacing: 12) {
@@ -244,7 +244,7 @@ struct FeatureRow: View {
     var body: some View {
         HStack {
             Image(systemName: icon)
-                .foregroundColor(.customAccent)
+                .foregroundStyle(Color.customAccent)
                 .frame(width: 16)
             Text(text)
                 .font(.body)

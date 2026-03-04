@@ -8,7 +8,7 @@ struct SearchBar: View {
         HStack {
             HStack {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
 
                 TextField("Search clipboard history...", text: $text)
                     .textFieldStyle(.plain)
@@ -23,14 +23,19 @@ struct SearchBar: View {
                         isSearching = false
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .background {
+                if #available(macOS 26, *) { Color.clear } else {
+                    RoundedRectangle(cornerRadius: 8).fill(.regularMaterial)
+                }
+            }
+            .glassControl(cornerRadius: 8)
 
             if isSearching {
                 Button("Search") {

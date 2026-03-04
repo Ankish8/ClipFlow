@@ -13,7 +13,7 @@ struct InlineTagCreator: View {
 
     let onTagCreated: (Tag) -> Void
 
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorScheme) private var colorScheme
     @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
@@ -35,7 +35,7 @@ struct InlineTagCreator: View {
                 Text("New Tag")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(.secondary)
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
@@ -59,9 +59,8 @@ struct InlineTagCreator: View {
             Button(action: {
                 showColorPicker.toggle()
             }) {
-                let (r, g, b) = selectedColor.rgbComponents
                 Circle()
-                    .fill(Color(red: r, green: g, blue: b))
+                    .fill(selectedColor.swiftUIColor)
                     .frame(width: 16, height: 16)
                     .overlay(
                         Circle()
@@ -83,7 +82,7 @@ struct InlineTagCreator: View {
                     NSLog("📝 Tag creator: onSubmit triggered")
                     createTag()
                 }
-                .onChange(of: tagName) { newValue in
+                .onChange(of: tagName) { _, newValue in
                     NSLog("📝 Tag creator: Text changed to '\(newValue)'")
                     // Clear error when user starts typing
                     if showError {
@@ -93,7 +92,7 @@ struct InlineTagCreator: View {
                         }
                     }
                 }
-                .onChange(of: isTextFieldFocused) { isFocused in
+                .onChange(of: isTextFieldFocused) { _, isFocused in
                     NSLog("📝 Tag creator: Focus changed to \(isFocused)")
                 }
                 .onKeyPress(.escape) {
@@ -108,7 +107,7 @@ struct InlineTagCreator: View {
                 Button(action: createTag) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.green)
+                        .foregroundStyle(.green)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -117,7 +116,7 @@ struct InlineTagCreator: View {
             Button(action: cancelCreation) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(PlainButtonStyle())
         }

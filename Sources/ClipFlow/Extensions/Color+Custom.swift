@@ -1,4 +1,5 @@
 import SwiftUI
+import ClipFlowCore
 
 // MARK: - Custom Colors
 extension Color {
@@ -11,4 +12,13 @@ extension Color {
     
     /// High contrast color for selected states
     static let highContrastAccent = Color.white
+}
+
+// MARK: - TagColor SwiftUI Convenience
+extension TagColor {
+    /// SwiftUI Color from this tag color — avoids the (r,g,b) destructure pattern at call sites
+    public var swiftUIColor: Color {
+        let (r, g, b) = rgbComponents
+        return Color(red: r, green: g, blue: b)
+    }
 }

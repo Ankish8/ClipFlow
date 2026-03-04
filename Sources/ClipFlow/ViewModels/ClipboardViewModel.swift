@@ -5,19 +5,19 @@ import ClipFlowCore
 import ClipFlowAPI
 import ClipFlowBackend
 
-@MainActor
-class ClipboardViewModel: ObservableObject {
-    @Published var items: [ClipboardItem] = []
-    @Published var isLoading = false
-    @Published var errorMessage: String?
-    @Published var statistics: ClipboardStatistics?
+@MainActor @Observable
+class ClipboardViewModel {
+    var items: [ClipboardItem] = []
+    var isLoading = false
+    var errorMessage: String?
+    var statistics: ClipboardStatistics?
 
-    private var cancellables = Set<AnyCancellable>()
-    private let clipboardService = ClipboardService.shared
+    @ObservationIgnored private var cancellables = Set<AnyCancellable>()
+    @ObservationIgnored private let clipboardService = ClipboardService.shared
 
     // Drag protection
-    private var isDragInProgress = false
-    private var itemsBackup: [ClipboardItem] = []
+    @ObservationIgnored private var isDragInProgress = false
+    @ObservationIgnored private var itemsBackup: [ClipboardItem] = []
 
     func initialize() {
         print("🚀 ViewModel initializing...")
@@ -93,16 +93,14 @@ class ClipboardViewModel: ObservableObject {
 
                 // Only update items if not currently dragging
                 if !isDragInProgress {
-                    // Merge history with existing items, preferring existing (newer/correct) items
-                    var mergedItems: [ClipboardItem] = items
-                    for historyItem in history {
-                        // Only add if not already present (by ID or hash)
-                        let isDuplicate = mergedItems.contains { existing in
-                            existing.id == historyItem.id || existing.metadata.hash == historyItem.metadata.hash
-                        }
-                        if !isDuplicate {
-                            mergedItems.append(historyItem)
-                        }
+                    // Merge history with existing items using Set lookups for O(n) instead of O(n²)
+                    let existingIds = Set(items.map(\.id))
+                    let existingHashes = Set(items.map(\.metadata.hash))
+                    var mergedItems = items
+                    for historyItem in history
+                        where !existingIds.contains(historyItem.id)
+                           && !existingHashes.contains(historyItem.metadata.hash) {
+                        mergedItems.append(historyItem)
                     }
                     items = mergedItems
                 } else {
@@ -247,9 +245,8 @@ class ClipboardViewModel: ObservableObject {
     // MARK: - Drag Protection
 
     private func setupDragProtection() {
-        // Subscribe to start dragging notification
         NotificationCenter.default.addObserver(
-            forName: Notification.Name("startDragging"),
+            forName: .startDragging,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -258,9 +255,8 @@ class ClipboardViewModel: ObservableObject {
             }
         }
 
-        // Subscribe to stop dragging notification
         NotificationCenter.default.addObserver(
-            forName: Notification.Name("stopDragging"),
+            forName: .stopDragging,
             object: nil,
             queue: .main
         ) { [weak self] _ in

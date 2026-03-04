@@ -8,7 +8,7 @@ struct ExpandableSearchBar: View {
     let placeholder: String
     let onSearch: ((String) -> Void)?
 
-    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorScheme) private var colorScheme
     @FocusState private var isTextFieldFocused: Bool
     @State private var searchTask: Task<Void, Never>?
 
@@ -51,7 +51,7 @@ struct ExpandableSearchBar: View {
                 Text("Search")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundColor(.secondary)
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
@@ -74,7 +74,7 @@ struct ExpandableSearchBar: View {
             // Search icon
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
 
             // Text field
             TextField(placeholder, text: $searchText)
@@ -87,7 +87,7 @@ struct ExpandableSearchBar: View {
                     // Perform immediate search on Enter
                     performSearch()
                 }
-                .onChange(of: searchText) { newValue in
+                .onChange(of: searchText) { _, newValue in
                     // Cancel previous search task
                     searchTask?.cancel()
 
@@ -110,7 +110,7 @@ struct ExpandableSearchBar: View {
                 Button(action: clearSearch) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .transition(.scale.combined(with: .opacity))
@@ -120,7 +120,7 @@ struct ExpandableSearchBar: View {
             Button(action: collapseSearch) {
                 Image(systemName: "chevron.up.circle.fill")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(PlainButtonStyle())
         }

@@ -7,54 +7,28 @@ struct TextPreviewCard: View {
     let content: TextContent
     @Environment(\.colorScheme) var colorScheme
 
-    private var detectedColor: Color? {
+    // Parse hex once — returns (swiftUIColor, luminance) or nil if not a hex color
+    private var detectedColorInfo: (color: Color, luminance: Double)? {
         let text = content.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return parseHexColor(text)
-    }
-
-    private func parseHexColor(_ hex: String) -> Color? {
-        let hex = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hex.hasPrefix("#"), hex.count == 7 else { return nil }
-
-        let hexValue = String(hex.dropFirst())
-        guard let intValue = Int(hexValue, radix: 16) else { return nil }
-
-        let red = Double((intValue & 0xFF0000) >> 16) / 255.0
-        let green = Double((intValue & 0x00FF00) >> 8) / 255.0
-        let blue = Double(intValue & 0x0000FF) / 255.0
-
-        return Color(.sRGB, red: red, green: green, blue: blue, opacity: 1.0)
-    }
-
-    // Calculate luminance for detected color
-    private var colorLuminance: Double {
-        guard detectedColor != nil else { return 0.5 }
-        // Extract RGB from SwiftUI Color (approximation)
-        let text = content.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let rgb = parseRGBFromHex(text) {
-            let r = Double(rgb.0) / 255.0
-            let g = Double(rgb.1) / 255.0
-            let b = Double(rgb.2) / 255.0
-            return 0.299 * r + 0.587 * g + 0.114 * b
-        }
-        return 0.5
-    }
-
-    // Determine contrasting text color
-    private var contrastingTextColor: Color {
-        return colorLuminance > 0.5 ? Color.black : Color.white
+        guard text.hasPrefix("#"), text.count == 7,
+              let intValue = Int(String(text.dropFirst()), radix: 16) else { return nil }
+        let r = Double((intValue & 0xFF0000) >> 16) / 255.0
+        let g = Double((intValue & 0x00FF00) >> 8) / 255.0
+        let b = Double(intValue & 0x0000FF) / 255.0
+        return (Color(.sRGB, red: r, green: g, blue: b, opacity: 1.0), 0.299 * r + 0.587 * g + 0.114 * b)
     }
 
     var body: some View {
-        if let color = detectedColor {
+        if let info = detectedColorInfo {
             // Display as color preview with overlaid hex code (no RGB)
+            let contrastingColor: Color = info.luminance > 0.5 ? .black : .white
             RoundedRectangle(cornerRadius: 12)
-                .fill(color)
+                .fill(info.color)
                 .overlay(
                     // Hex code centered on color with intelligent contrast
                     Text(content.plainText.uppercased())
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(contrastingTextColor)
+                        .foregroundStyle(contrastingColor)
                 )
                 .overlay(
                     // Border for better definition
@@ -70,7 +44,7 @@ struct TextPreviewCard: View {
                 if content.plainText.count > 50 {
                     Text(String(content.plainText.prefix(40)) + (content.plainText.count > 40 ? "..." : ""))
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(colorScheme == .light ?
+                        .foregroundStyle(colorScheme == .light ?
                             Color(.sRGB, red: 0.118, green: 0.161, blue: 0.231, opacity: 1.0) : // #1e293b
                             Color(.sRGB, red: 0.9, green: 0.9, blue: 0.9, opacity: 1.0)
                         )
@@ -81,7 +55,7 @@ struct TextPreviewCard: View {
                 if content.plainText.count <= 50 {
                     Text(content.plainText)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(colorScheme == .light ?
+                        .foregroundStyle(colorScheme == .light ?
                             Color(.sRGB, red: 0.118, green: 0.161, blue: 0.231, opacity: 1.0) : // #1e293b
                             Color(.sRGB, red: 0.9, green: 0.9, blue: 0.9, opacity: 1.0)
                         )
@@ -89,7 +63,7 @@ struct TextPreviewCard: View {
                 } else {
                     Text(content.plainText)
                         .font(.system(size: 14))
-                        .foregroundColor(colorScheme == .light ?
+                        .foregroundStyle(colorScheme == .light ?
                             Color(.sRGB, red: 0.2, green: 0.322, blue: 0.333, opacity: 1.0) : // #334155
                             Color(.sRGB, red: 0.8, green: 0.8, blue: 0.8, opacity: 1.0)
                         )
@@ -101,19 +75,6 @@ struct TextPreviewCard: View {
         }
     }
 
-    private func parseRGBFromHex(_ hex: String) -> (Int, Int, Int)? {
-        let hex = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hex.hasPrefix("#"), hex.count == 7 else { return nil }
-
-        let hexValue = String(hex.dropFirst())
-        guard let intValue = Int(hexValue, radix: 16) else { return nil }
-
-        let red = (intValue & 0xFF0000) >> 16
-        let green = (intValue & 0x00FF00) >> 8
-        let blue = intValue & 0x0000FF
-
-        return (red, green, blue)
-    }
 }
 
 // MARK: - Rich Text Preview Card
@@ -126,7 +87,7 @@ struct RichTextPreviewCard: View {
             if content.plainTextFallback.count > 50 {
                 Text(String(content.plainTextFallback.prefix(40)) + (content.plainTextFallback.count > 40 ? "..." : ""))
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
             }
 
@@ -134,12 +95,12 @@ struct RichTextPreviewCard: View {
             if content.plainTextFallback.count <= 50 {
                 Text(content.plainTextFallback)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .lineLimit(3)
             } else {
                 Text(content.plainTextFallback)
                     .font(.system(size: 14))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(6)
                     .lineSpacing(1.5)
             }
@@ -151,25 +112,27 @@ struct RichTextPreviewCard: View {
 // MARK: - Image Preview Card
 struct ImagePreviewCard: View {
     let content: ImageContent
+    @State private var renderedImage: Image? = nil
 
     var body: some View {
         VStack(spacing: 6) {
-            // Image preview - larger for better visibility
-            if let nsImage = NSImage(data: content.data) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.secondary.opacity(0.2))
-                    .frame(height: 180)
-                    .overlay(
-                        Image(systemName: "photo")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 24))
-                    )
+            Group {
+                if let img = renderedImage {
+                    img
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                } else {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.secondary.opacity(0.2))
+                        .frame(height: 180)
+                        .overlay(
+                            Image(systemName: "photo")
+                                .foregroundStyle(.secondary)
+                                .font(.system(size: 24))
+                        )
+                }
             }
 
             Spacer(minLength: 4)
@@ -178,14 +141,23 @@ struct ImagePreviewCard: View {
             VStack(spacing: 3) {
                 Text("\(content.format.rawValue.uppercased())")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
 
                 Text("\(Int(content.dimensions.width)) × \(Int(content.dimensions.height))")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            let data = content.data
+            let nsImage = await Task.detached(priority: .utility) {
+                NSImage(data: data)
+            }.value
+            if let nsImage {
+                renderedImage = Image(nsImage: nsImage)
+            }
+        }
     }
 }
 
@@ -200,18 +172,18 @@ struct FilePreviewCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: fileIcon)
                         .font(.system(size: 24))
-                        .foregroundColor(.orange)
+                        .foregroundStyle(.orange)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(content.fileName)
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.primary)
+                            .foregroundStyle(.primary)
                             .lineLimit(2)
 
                         if content.urls.count > 1 {
                             Text("\(content.urls.count) files")
                                 .font(.system(size: 11))
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -220,7 +192,7 @@ struct FilePreviewCard: View {
                 if let firstURL = content.urls.first {
                     Text(firstURL.lastPathComponent)
                         .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
             }
@@ -232,13 +204,13 @@ struct FilePreviewCard: View {
                 HStack {
                     Text(content.fileType.uppercased())
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.primary)
+                        .foregroundStyle(.primary)
 
                     Spacer()
 
                     Text(formatFileSize(content.fileSize))
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -271,11 +243,15 @@ struct FilePreviewCard: View {
         }
     }
 
+    private static let byteCountFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        f.countStyle = .file
+        return f
+    }()
+
     private func formatFileSize(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
+        Self.byteCountFormatter.string(fromByteCount: bytes)
     }
 }
 
@@ -290,18 +266,18 @@ struct LinkPreviewCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: "link")
                         .font(.system(size: 18))
-                        .foregroundColor(.cyan)
+                        .foregroundStyle(.cyan)
 
                     VStack(alignment: .leading, spacing: 2) {
                         if let title = content.title, !title.isEmpty {
                             Text(title)
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.primary)
+                                .foregroundStyle(.primary)
                                 .lineLimit(3)
                         } else {
                             Text("Web Link")
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.primary)
+                                .foregroundStyle(.primary)
                         }
                     }
                 }
@@ -310,7 +286,7 @@ struct LinkPreviewCard: View {
                 if let host = content.url.host {
                     Text(host)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.cyan)
+                        .foregroundStyle(.cyan)
                         .lineLimit(1)
                 }
             }
@@ -321,11 +297,11 @@ struct LinkPreviewCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("URL")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.8))
+                    .foregroundStyle(Color.secondary.opacity(0.8))
 
                 Text(content.url.absoluteString)
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
             }
@@ -359,7 +335,7 @@ struct ColorPreviewCard: View {
                 // Hex code centered on color with intelligent contrast
                 Text(content.hexValue.uppercased())
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(contrastingTextColor)
+                    .foregroundStyle(contrastingTextColor)
             )
             .overlay(
                 // Border for better definition
@@ -383,16 +359,16 @@ struct MultiPreviewCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: "square.stack.3d.up")
                         .font(.system(size: 20))
-                        .foregroundColor(colorScheme == .dark ? .white : .primary)
+                        .foregroundStyle(colorScheme == .dark ? .white : .primary)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(content.items.count) Items")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.primary)
+                            .foregroundStyle(.primary)
 
                         Text("Multiple content types")
                             .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -406,14 +382,14 @@ struct MultiPreviewCard: View {
                                 .frame(width: 4, height: 4)
                             Text(type.capitalized)
                                 .font(.system(size: 11))
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                     }
 
                     if contentTypes.count > 4 {
                         Text("+ \(contentTypes.count - 4) more...")
                             .font(.system(size: 10))
-                            .foregroundColor(.secondary.opacity(0.8))
+                            .foregroundStyle(Color.secondary.opacity(0.8))
                     }
                 }
             }

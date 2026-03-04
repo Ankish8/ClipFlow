@@ -241,7 +241,7 @@ public struct ItemSource: Codable, Hashable, Sendable {
         self.deviceName = deviceName ?? Self.currentDeviceName()
     }
 
-    internal static func currentDeviceID() -> String {
+    private static let _deviceID: String = {
         if let uuid = IORegistryEntryCreateCFProperty(
             IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/"),
             "IOPlatformUUID" as CFString,
@@ -250,7 +250,9 @@ public struct ItemSource: Codable, Hashable, Sendable {
             return uuid
         }
         return UUID().uuidString
-    }
+    }()
+
+    internal static func currentDeviceID() -> String { _deviceID }
 
     internal static func currentDeviceName() -> String {
         Host.current().localizedName ?? "Unknown Mac"
