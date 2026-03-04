@@ -7,7 +7,6 @@ import Combine
 struct TagFilterBarView: View {
     var viewModel: ClipboardViewModel
     @Binding var selectedTagIds: Set<UUID>
-    @Binding var isSearchExpanded: Bool
     @Binding var searchText: String
 
     @State private var tags: [Tag] = []
@@ -106,10 +105,9 @@ struct TagFilterBarView: View {
                 // Divider
                 divider
 
-                // Expandable search bar
+                // Always-visible search field
                 ExpandableSearchBar(
                     searchText: $searchText,
-                    isExpanded: $isSearchExpanded,
                     placeholder: "Search clipboard...",
                     onSearch: performSearch
                 )
@@ -391,7 +389,6 @@ struct TagFilterBarView: View {
     struct PreviewWrapper: View {
         @State private var viewModel = ClipboardViewModel()
         @State private var selectedTagIds: Set<UUID> = []
-        @State private var isSearchExpanded = false
         @State private var searchText = ""
 
         var body: some View {
@@ -399,7 +396,6 @@ struct TagFilterBarView: View {
                 TagFilterBarView(
                     viewModel: viewModel,
                     selectedTagIds: $selectedTagIds,
-                    isSearchExpanded: $isSearchExpanded,
                     searchText: $searchText
                 )
                 .background(Color.gray.opacity(0.1))

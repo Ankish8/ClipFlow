@@ -15,6 +15,12 @@ struct ClipboardCardView: View {
     @State private var showCopyFeedback = false
     @State private var showTagMenu = false
     @State private var showNewTagCreator = false
+    @State private var showEditSheet = false
+    @State private var showPreviewSheet = false
+    @State private var showRenameSheet = false
+    @State private var editText = ""
+    @State private var renameText = ""
+    @State private var tagTintColor: Color = .clear
 
     // PERFORMANCE: Cache computed tags instead of filtering on every render
     @State private var itemTags: [Tag] = []
@@ -60,7 +66,12 @@ struct ClipboardCardView: View {
         }
         .frame(width: cardWidth, height: 250)
         .containerShape(.rect(cornerRadius: 20))
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
+        .glassEffect(
+            tagTintColor == .clear
+                ? .regular.interactive()
+                : .regular.tint(tagTintColor.opacity(0.1)).interactive(),
+            in: .rect(cornerRadius: 20)
+        )
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
@@ -89,10 +100,21 @@ struct ClipboardCardView: View {
         .contextMenu {
             cardContextMenu
         }
+        .sheet(isPresented: $showEditSheet) {
+            editSheet
+        }
+        .sheet(isPresented: $showPreviewSheet) {
+            previewSheet
+        }
+        .sheet(isPresented: $showRenameSheet) {
+            renameSheet
+        }
         .onAppear {
             // PERFORMANCE: Cache tags once on appear instead of computing every render
             allTags = TagService.shared.getAllTags()
             itemTags = allTags.filter { item.tagIds.contains($0.id) }
+            // Apply first tag's color as a subtle card tint
+            tagTintColor = itemTags.first.map { $0.color.swiftUIColor } ?? .clear
 
             // PERFORMANCE: Cache time-ago once — avoids formatter + Date() on every render
             cachedTimeAgo = Self.relativeDateFormatter.localizedString(
@@ -152,7 +174,7 @@ struct ClipboardCardView: View {
     private var cardHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                // Content type badge — concentric corners match card radius
+                // Content type badge
                 Text(contentTypeInfo.name.uppercased())
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -160,12 +182,27 @@ struct ClipboardCardView: View {
                     .padding(.vertical, 2)
                     .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
+                // Pin indicator
+                if item.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(45))
+                }
+
+                // Custom name label
+                if let name = viewModel.customName(for: item.id) {
+                    Text(name)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
                 Spacer()
 
                 // Source app icon badge
                 appIconBadge
             }
-
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -396,12 +433,61 @@ struct ClipboardCardView: View {
 
     private var cardContextMenu: some View {
         Group {
-            Button("Copy") {
-                copyItem()
+            // Paste to frontmost app (dynamic label — panel is non-activating so frontmost = previous app)
+            let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "App"
+            Button("Paste to \(frontApp)") {
+                pasteAndHideOverlay()
             }
 
-            Button("Paste & Close") {
-                pasteAndHideOverlay()
+            Button("Paste as Plain Text") {
+                NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+                Task {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    viewModel.pasteItem(item, transform: .removeFormatting)
+                }
+            }
+
+            Button("Copy") {
+                viewModel.copyToClipboard(item)
+            }
+
+            Divider()
+
+            // Edit — only for text-type items
+            if case .text = item.content {
+                Button("Edit") {
+                    if case .text(let c) = item.content { editText = c.plainText }
+                    showEditSheet = true
+                }
+
+                Button("Writing Tools") {
+                    if case .text(let c) = item.content { editText = c.plainText }
+                    showEditSheet = true  // Edit sheet has WritingTools enabled
+                }
+            }
+
+            Button("Rename") {
+                renameText = viewModel.customName(for: item.id) ?? ""
+                showRenameSheet = true
+            }
+
+            Divider()
+
+            // Pin submenu
+            Menu("Pin") {
+                if item.isPinned {
+                    Button("Unpin") { viewModel.setPinned(false, for: item) }
+                } else {
+                    Button("Pin to Top") { viewModel.setPinned(true, for: item) }
+                }
+            }
+
+            Button("Preview") {
+                showPreviewSheet = true
+            }
+
+            Button("Share...") {
+                shareItem()
             }
 
             Divider()
@@ -409,38 +495,26 @@ struct ClipboardCardView: View {
             // Tag submenu
             Menu("Tag") {
                 ForEach(allTags) { tag in
-                    Button(action: {
-                        toggleTag(tag)
-                    }) {
+                    Button(action: { toggleTag(tag) }) {
                         HStack {
                             if itemTags.contains(where: { $0.id == tag.id }) {
                                 Image(systemName: "checkmark")
                             }
                             Text(tag.name)
-                            Spacer()
-                            Circle()
-                                .fill(tag.color.swiftUIColor)
-                                .frame(width: 10, height: 10)
                         }
                     }
                 }
-
                 Divider()
-
-                Button("New Tag...") {
-                    showNewTagCreator = true
-                }
+                Button("New Tag...") { showNewTagCreator = true }
             }
             .popover(isPresented: $showNewTagCreator) {
                 VStack(spacing: 16) {
-                    Text("Create New Tag")
-                        .font(.headline)
-
+                    Text("Create New Tag").font(.headline)
                     InlineTagCreator { newTag in
-                        // Add the newly created tag to this item
                         viewModel.addTagToItem(tagId: newTag.id, itemId: item.id)
                         itemTags.append(newTag)
                         allTags.append(newTag)
+                        tagTintColor = newTag.color.swiftUIColor
                         showNewTagCreator = false
                     }
                 }
@@ -453,6 +527,107 @@ struct ClipboardCardView: View {
             Button("Delete", role: .destructive) {
                 viewModel.deleteItem(item)
             }
+        }
+    }
+
+    // MARK: - Edit Sheet
+
+    private var editSheet: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Edit Item")
+                    .font(.headline)
+                Spacer()
+                Button("Done") {
+                    viewModel.updateItemText(item, newText: editText)
+                    showEditSheet = false
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+
+            Divider()
+
+            TextEditor(text: $editText)
+                .font(.system(size: 13))
+                .writingToolsBehavior(.automatic)
+                .padding(12)
+        }
+        .frame(width: 560, height: 360)
+    }
+
+    // MARK: - Preview Sheet
+
+    private var previewSheet: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(viewModel.customName(for: item.id) ?? item.content.typeDisplayName)
+                    .font(.headline)
+                Spacer()
+                Button("Done") { showPreviewSheet = false }
+                    .buttonStyle(.bordered)
+            }
+            .padding()
+
+            Divider()
+
+            DetailView(item: item, viewModel: viewModel)
+        }
+        .frame(width: 600, height: 500)
+    }
+
+    // MARK: - Rename Sheet
+
+    private var renameSheet: some View {
+        VStack(spacing: 16) {
+            Text("Rename Item")
+                .font(.headline)
+
+            TextField("Custom name (optional)", text: $renameText)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("Clear") {
+                    viewModel.setCustomName(nil, for: item.id)
+                    showRenameSheet = false
+                }
+                Spacer()
+                Button("Cancel") { showRenameSheet = false }
+                    .buttonStyle(.bordered)
+                Button("Save") {
+                    viewModel.setCustomName(renameText, for: item.id)
+                    showRenameSheet = false
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    // MARK: - Share
+
+    private func shareItem() {
+        var shareItems: [Any] = []
+        switch item.content {
+        case .text(let c):     shareItems = [c.plainText]
+        case .richText(let c): shareItems = [c.plainTextFallback]
+        case .link(let c):     shareItems = [c.url]
+        case .code(let c):     shareItems = [c.code]
+        case .color(let c):    shareItems = [c.hexValue]
+        case .snippet(let c):  shareItems = [c.content]
+        case .image(let c):
+            if let img = NSImage(data: c.data) { shareItems = [img] }
+        case .file(let c):     shareItems = c.urls
+        case .multiple(let c):
+            for sub in c.items {
+                if case .text(let t) = sub { shareItems = [t.plainText]; break }
+            }
+        }
+        guard !shareItems.isEmpty else { return }
+        let picker = NSSharingServicePicker(items: shareItems)
+        if let window = NSApp.keyWindow ?? NSApp.windows.first {
+            picker.show(relativeTo: .zero, of: window.contentView!, preferredEdge: .minY)
         }
     }
 

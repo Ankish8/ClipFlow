@@ -19,6 +19,10 @@ class ClipboardViewModel {
     @ObservationIgnored private var isDragInProgress = false
     @ObservationIgnored private var itemsBackup: [ClipboardItem] = []
 
+    // O(1) duplicate detection — kept in sync with items array
+    @ObservationIgnored private var itemIdSet = Set<UUID>()
+    @ObservationIgnored private var itemHashSet = Set<String>()
+
     func initialize() {
         print("🚀 ViewModel initializing...")
         setupSubscriptions()
@@ -55,17 +59,27 @@ class ClipboardViewModel {
     }
 
     private func handleNewItem(_ item: ClipboardItem) {
-        // Remove duplicates by ID or hash, but KEEP the new item (it might have better classification)
-        items.removeAll { existingItem in
-            existingItem.id == item.id || existingItem.metadata.hash == item.metadata.hash
+        // O(1) check: only scan the array if we know a duplicate exists
+        if itemIdSet.contains(item.id) || itemHashSet.contains(item.metadata.hash) {
+            items.removeAll { $0.id == item.id || $0.metadata.hash == item.metadata.hash }
+            // Sets are rebuilt below via rebuildSets; don't update incrementally here
         }
-        // Insert the NEW item at the beginning (it has the latest/correct classification)
+
         items.insert(item, at: 0)
+        itemIdSet.insert(item.id)
+        itemHashSet.insert(item.metadata.hash)
 
         // Limit to reasonable number for performance
         if items.count > 1000 {
-            items = Array(items.prefix(1000))
+            let removed = items.removeLast()
+            itemIdSet.remove(removed.id)
+            itemHashSet.remove(removed.metadata.hash)
         }
+    }
+
+    private func rebuildSets() {
+        itemIdSet = Set(items.map(\.id))
+        itemHashSet = Set(items.map(\.metadata.hash))
     }
 
     private func handleStatusUpdate(_ status: MonitorStatus) {
@@ -103,6 +117,7 @@ class ClipboardViewModel {
                         mergedItems.append(historyItem)
                     }
                     items = mergedItems
+                    rebuildSets()
                 } else {
                     print("🛡️ Skipping data update during drag operation")
                 }
@@ -144,6 +159,8 @@ class ClipboardViewModel {
             do {
                 try await clipboardService.deleteItems(ids: [item.id])
                 items.removeAll { $0.id == item.id }
+                itemIdSet.remove(item.id)
+                itemHashSet.remove(item.metadata.hash)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -221,6 +238,8 @@ class ClipboardViewModel {
             do {
                 try await clipboardService.clearHistory(olderThan: nil)
                 items.removeAll()
+                itemIdSet.removeAll()
+                itemHashSet.removeAll()
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -280,6 +299,7 @@ class ClipboardViewModel {
         if items.isEmpty && !itemsBackup.isEmpty {
             print("🔧 Data was lost during drag - restoring \(itemsBackup.count) items")
             items = itemsBackup
+            rebuildSets()
         }
 
         // Clear backup after a short delay
@@ -337,10 +357,87 @@ class ClipboardViewModel {
 
     func filteredItems(byTags tagIds: Set<UUID>) -> [ClipboardItem] {
         guard !tagIds.isEmpty else { return items }
+        return items.filter { !$0.tagIds.isDisjoint(with: tagIds) }
+    }
 
-        return items.filter { item in
-            // Item must have at least one of the selected tags
-            !item.tagIds.intersection(tagIds).isEmpty
+    // MARK: - Copy to Clipboard (no paste)
+
+    /// Write item content to NSPasteboard without triggering paste.
+    func copyToClipboard(_ item: ClipboardItem) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        switch item.content {
+        case .text(let c):     pb.setString(c.plainText, forType: .string)
+        case .richText(let c): pb.setString(c.plainTextFallback, forType: .string)
+        case .link(let c):     pb.setString(c.url.absoluteString, forType: .string)
+        case .code(let c):     pb.setString(c.code, forType: .string)
+        case .color(let c):    pb.setString(c.hexValue, forType: .string)
+        case .snippet(let c):  pb.setString(c.content, forType: .string)
+        case .image(let c):
+            if let img = NSImage(data: c.data) { pb.writeObjects([img]) }
+        case .file(let c):
+            pb.writeObjects(c.urls as [NSURL])
+        case .multiple(let c):
+            for sub in c.items {
+                if case .text(let t) = sub { pb.setString(t.plainText, forType: .string); break }
+            }
         }
+    }
+
+    // MARK: - Edit Item Text
+
+    /// Update the plain-text content of a text-type item. Persists to DB and updates local cache.
+    func updateItemText(_ item: ClipboardItem, newText: String) {
+        guard case .text(let old) = item.content else { return }
+        let newContent = ClipboardContent.text(
+            TextContent(plainText: newText, encoding: old.encoding, language: old.language,
+                        isEmail: old.isEmail, isPhoneNumber: old.isPhoneNumber, isURL: old.isURL)
+        )
+        let updated = ClipboardItem(
+            id: item.id, content: newContent,
+            metadata: ItemMetadata.generate(for: newContent),
+            source: item.source, timestamps: item.timestamps,
+            security: item.security, collectionIds: item.collectionIds,
+            tagIds: item.tagIds, isFavorite: item.isFavorite,
+            isPinned: item.isPinned, isDeleted: item.isDeleted
+        )
+        Task {
+            do {
+                try await clipboardService.updateItemContent(updated)
+                if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                    items[idx] = updated
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    // MARK: - Pin / Unpin
+
+    /// Optimistically toggle pin with immediate local update.
+    func setPinned(_ pinned: Bool, for item: ClipboardItem) {
+        guard item.isPinned != pinned else { return }
+        togglePin(for: item)
+        if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            var updated = items[idx]
+            updated.isPinned = pinned
+            items[idx] = updated
+        }
+    }
+
+    // MARK: - Custom Name (Rename) — UserDefaults, no schema change needed
+
+    private static let customNamesKey = "ClipFlow.customItemNames"
+
+    func customName(for itemId: UUID) -> String? {
+        let dict = UserDefaults.standard.dictionary(forKey: Self.customNamesKey) as? [String: String]
+        return dict?[itemId.uuidString]
+    }
+
+    func setCustomName(_ name: String?, for itemId: UUID) {
+        var dict = (UserDefaults.standard.dictionary(forKey: Self.customNamesKey) as? [String: String]) ?? [:]
+        if let n = name, !n.isEmpty { dict[itemId.uuidString] = n } else { dict.removeValue(forKey: itemId.uuidString) }
+        UserDefaults.standard.set(dict, forKey: Self.customNamesKey)
     }
 }

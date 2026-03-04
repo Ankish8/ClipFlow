@@ -45,9 +45,9 @@ struct ToolbarChipButtonStyle: ButtonStyle {
         }
 
         private var fill: Color {
-            if isSelected { return tintColor.opacity(0.18) }
-            if configuration.isPressed { return .primary.opacity(0.12) }
-            if isHovering { return .primary.opacity(0.07) }
+            if isSelected { return tintColor.opacity(0.20) }
+            if configuration.isPressed { return .primary.opacity(0.14) }
+            if isHovering { return .primary.opacity(0.10) }
             return .clear
         }
     }

@@ -540,4 +540,10 @@ public class ClipboardService: ClipboardServiceAPI {
     public func deleteItem(_ itemId: UUID) async throws {
         try await deleteItems(ids: [itemId])
     }
+
+    /// Replace the content of an existing item and persist to DB. Used by the Edit feature.
+    public func updateItemContent(_ item: ClipboardItem) async throws {
+        try await storageService.updateItem(item)
+        _itemUpdates.send(item)
+    }
 }

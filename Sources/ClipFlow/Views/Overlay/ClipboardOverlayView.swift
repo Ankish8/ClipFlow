@@ -6,14 +6,16 @@ struct ClipboardOverlayView: View {
     @State private var selectedIndex: Int = 0
     @State private var selectedTagIds: Set<UUID> = []
 
-    // Search state - managed here for keyboard capture
-    @State private var isSearchExpanded = false
+    // Search state
     @State private var searchText = ""
 
     // PERFORMANCE: Cache filtered items instead of recomputing on every render
     @State private var filteredItems: [ClipboardItem] = []
     // PERFORMANCE: Avoid Array(enumerated()) allocation on every render
     @State private var enumeratedFilteredItems: [(offset: Int, element: ClipboardItem)] = []
+
+    // Debounce: cancel previous search task before starting a new one
+    @State private var searchDebounceTask: Task<Void, Never>?
 
     // Default initializer creates its own viewModel (for standalone use)
     init() {
@@ -31,21 +33,23 @@ struct ClipboardOverlayView: View {
     private func updateFilteredItems() {
         var items = viewModel.items
 
-        // Apply tag filtering
+        // Apply tag filtering — isDisjoint avoids allocating an intersection Set
         if !selectedTagIds.isEmpty {
-            items = items.filter { item in
-                !item.tagIds.intersection(selectedTagIds).isEmpty
-            }
+            items = items.filter { !$0.tagIds.isDisjoint(with: selectedTagIds) }
         }
 
         // Apply in-memory text filter — instant, no DB hit
         // Enter key triggers the deep DB search via ExpandableSearchBar.onSubmit
         if !searchText.isEmpty {
+            let query = searchText
             items = items.filter { item in
-                item.content.displayText.localizedCaseInsensitiveContains(searchText)
-                    || (item.source.applicationName?.localizedCaseInsensitiveContains(searchText) ?? false)
+                item.content.displayText.localizedCaseInsensitiveContains(query)
+                    || (item.source.applicationName?.localizedCaseInsensitiveContains(query) ?? false)
             }
         }
+
+        // Pinned items float to the front, then sort by recency (items are already newest-first)
+        items.sort { $0.isPinned && !$1.isPinned }
 
         filteredItems = items
         enumeratedFilteredItems = Array(items.enumerated())
@@ -60,11 +64,10 @@ struct ClipboardOverlayView: View {
     @ViewBuilder
     private var overlayContent: some View {
         VStack(spacing: 0) {
-            // Horizontal tag filter bar
+            // Horizontal tag filter bar (search field always visible inside)
             TagFilterBarView(
                 viewModel: viewModel,
                 selectedTagIds: $selectedTagIds,
-                isSearchExpanded: $isSearchExpanded,
                 searchText: $searchText
             )
             .padding(.top, 10)
@@ -88,7 +91,7 @@ struct ClipboardOverlayView: View {
                             .frame(width: 32)
                     }
                 }
-                .onChange(of: selectedIndex) { newIndex in
+                .onChange(of: selectedIndex) { _, newIndex in
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newIndex, anchor: .center)
                     }
@@ -104,29 +107,20 @@ struct ClipboardOverlayView: View {
             updateFilteredItems()
         }
         .onChange(of: selectedTagIds) {
+            // Tag changes are instant (no debounce needed)
             updateFilteredItems()
         }
         .onChange(of: viewModel.items) {
             updateFilteredItems()
         }
         .onChange(of: searchText) {
-            updateFilteredItems()
-        }
-        .focusable()
-        .focusEffectDisabled()
-        .onKeyPress { press in
-            // Auto-expand search when user starts typing
-            if !isSearchExpanded && press.characters.count == 1 && !press.characters.isEmpty {
-                let char = press.characters
-                if char.rangeOfCharacter(from: CharacterSet.alphanumerics) != nil
-                    || char.rangeOfCharacter(from: CharacterSet.punctuationCharacters) != nil
-                    || char == " " {
-                    isSearchExpanded = true
-                    searchText = char
-                    return .handled
-                }
+            // Debounce: wait 80ms after last keystroke before filtering
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard !Task.isCancelled else { return }
+                updateFilteredItems()
             }
-            return .ignored
         }
     }
 
@@ -172,10 +166,6 @@ struct ClipboardOverlayView: View {
             try? await Task.sleep(for: .milliseconds(100))
             NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         }
-    }
-
-    private func handleKeyboardInput() {
-        // Called from the window's keyDown events
     }
 
     func closeOverlay() {

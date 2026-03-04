@@ -190,7 +190,7 @@ class ClipboardOverlayWindow: NSPanel {
         }, completionHandler: {
             // Recalculate shadow after animation settles so it follows the rounded
             // glass corners rather than the rectangular window frame.
-            self.invalidateShadow()
+            Task { @MainActor in self.invalidateShadow() }
         })
     }
 
@@ -245,9 +245,6 @@ class ClipboardOverlayWindow: NSPanel {
 
         case 36: // Enter/Return
             overlayView.pasteCurrentSelection()
-
-        case 51, 117: // Delete/Backspace
-            overlayView.deleteCurrentSelection()
 
         case 123: // Left arrow
             overlayView.navigateLeft()
