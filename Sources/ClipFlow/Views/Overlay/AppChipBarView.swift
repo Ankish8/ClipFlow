@@ -78,26 +78,10 @@ struct AppChipBarView: View {
                 Text("All")
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             }
-            .foregroundColor(isSelected ? .white : .secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(isSelected ?
-                        Color.customAccent :
-                        Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12)
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(isSelected ?
-                                Color.customAccent.opacity(0.3) :
-                                Color.primary.opacity(0.15),
-                                lineWidth: isSelected ? 0 : 0.5)
-                    )
-            )
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
+        .buttonStyle(.glass(isSelected ? .regular.tint(Color.accentColor.opacity(0.5)).interactive() : .regular.interactive()))
     }
 
     private func appChip(for app: AppChip) -> some View {
@@ -105,7 +89,6 @@ struct AppChipBarView: View {
 
         return Button(action: {
             withAnimation(.easeInOut(duration: 0.15)) {
-                // Single-select: clear all and select only this app
                 selectedApps = [app.bundleID]
             }
         }) {
@@ -134,36 +117,18 @@ struct AppChipBarView: View {
                 // Count badge
                 Text("\(app.count)")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(isSelected ? .white.opacity(0.9) : .secondary)
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(
                         Capsule()
-                            .fill(isSelected ?
-                                Color.white.opacity(0.2) :
-                                Color.secondary.opacity(0.12))
+                            .fill(Color.secondary.opacity(0.12))
                     )
             }
-            .foregroundColor(isSelected ? .white : .primary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(isSelected ?
-                        Color.customAccent :
-                        Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12)
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(isSelected ?
-                                Color.customAccent.opacity(0.3) :
-                                Color.primary.opacity(0.15),
-                                lineWidth: isSelected ? 0 : 0.5)
-                    )
-            )
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
+        .buttonStyle(.glass(isSelected ? .regular.tint(Color.accentColor.opacity(0.5)).interactive() : .regular.interactive()))
     }
 
     private var moreChip: some View {
@@ -177,20 +142,10 @@ struct AppChipBarView: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .medium))
             }
-            .foregroundColor(.secondary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12))
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.primary.opacity(0.15), lineWidth: 0.5)
-                    )
-            )
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
+        .buttonStyle(.glass)
     }
 }
 

@@ -130,33 +130,17 @@ struct TagFilterBarView: View {
                 Text("Clipboard History")
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             }
-            .foregroundStyle(isSelected ? .white : .secondary)
             .padding(.horizontal, 16)
             .padding(.vertical, 6)
-            // Fallback background for macOS < 26
-            .background {
-                if #available(macOS 26, *) { Color.clear } else {
-                    Capsule()
-                        .fill(isSelected ? Color.customAccent : Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12))
-                        .overlay(
-                            Capsule().stroke(isSelected ? Color.customAccent.opacity(0.3) : Color.primary.opacity(0.15),
-                                             lineWidth: isSelected ? 0 : 0.5)
-                        )
-                }
-            }
-            // Liquid Glass on macOS 26+
-            .glassChip(tint: isSelected ? Color.customAccent.opacity(0.5) : nil)
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
+        .buttonStyle(.glass(isSelected ? .regular.tint(Color.accentColor.opacity(0.5)).interactive() : .regular.interactive()))
     }
 
     // MARK: - Divider
 
     private var divider: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.15))
-            .frame(width: 1, height: 16)
+        Divider()
+            .frame(height: 16)
     }
 
     // MARK: - Context Menu

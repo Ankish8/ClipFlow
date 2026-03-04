@@ -7,33 +7,38 @@ struct ClipboardItemsList: View {
     @Binding var selectedItem: ClipboardItem?
     let viewModel: ClipboardViewModel
 
-    var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 1) {
-                ForEach(items) { item in
-                    ClipboardItemRow(
-                        item: item,
-                        isSelected: selectedItem?.id == item.id,
-                        viewModel: viewModel
-                    )
-                    .onTapGesture {
-                        selectedItem = item
-                    }
-                    .contextMenu {
-                        ContextMenuContent(item: item, viewModel: viewModel)
-                    }
-                }
-
-                if items.count > 0 {
-                    LoadMoreButton {
-                        viewModel.loadMore()
-                    }
-                    .padding(.top, 16)
-                }
+    // Native List selection binding uses item ID
+    private var selectedItemID: Binding<ClipboardItem.ID?> {
+        Binding(
+            get: { selectedItem?.id },
+            set: { newID in
+                selectedItem = items.first { $0.id == newID }
             }
-            .padding(.vertical, 4)
+        )
+    }
+
+    var body: some View {
+        List(selection: selectedItemID) {
+            ForEach(items) { item in
+                ClipboardItemRow(
+                    item: item,
+                    viewModel: viewModel
+                )
+                .tag(item.id)
+                .contextMenu {
+                    ContextMenuContent(item: item, viewModel: viewModel)
+                }
+                .listRowSeparator(.visible)
+            }
+
+            if items.count > 0 {
+                LoadMoreButton {
+                    viewModel.loadMore()
+                }
+                .padding(.top, 16)
+            }
         }
-        .background(.regularMaterial)
+        .listStyle(.plain)
     }
 }
 
@@ -44,7 +49,6 @@ struct ClipboardItemRow: View {
         return f
     }()
     let item: ClipboardItem
-    let isSelected: Bool
     let viewModel: ClipboardViewModel
 
     var body: some View {
@@ -74,13 +78,12 @@ struct ClipboardItemRow: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-
             }
 
             Spacer()
 
             // Status indicators
-            VStack(spacing: 4) {
+            HStack(spacing: 4) {
                 if item.isPinned {
                     Image(systemName: "pin.fill")
                         .foregroundStyle(.orange)
@@ -92,21 +95,8 @@ struct ClipboardItemRow: View {
                         .foregroundStyle(.red)
                         .font(.caption)
                 }
-
-                // Security features removed for v1
-                // if item.security.isEncrypted { ... }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background {
-            if #available(macOS 26, *) { Color.clear } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.customAccent.opacity(0.2) : Color.clear)
-            }
-        }
-        .glassCard(isSelected: isSelected, cornerRadius: 8)
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
     }
 }
 

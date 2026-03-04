@@ -7,11 +7,13 @@ struct TextPreviewCard: View {
     let content: TextContent
     @Environment(\.colorScheme) var colorScheme
 
-    // Parse hex once — returns (swiftUIColor, luminance) or nil if not a hex color
-    private var detectedColorInfo: (color: Color, luminance: Double)? {
-        let text = content.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text.hasPrefix("#"), text.count == 7,
-              let intValue = Int(String(text.dropFirst()), radix: 16) else { return nil }
+    // PERFORMANCE: Cache parsed color info — avoids string slicing + Int(radix:) on every render
+    @State private var colorInfo: (color: Color, luminance: Double)? = nil
+
+    private static func parseColorInfo(from text: String) -> (color: Color, luminance: Double)? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("#"), trimmed.count == 7,
+              let intValue = Int(String(trimmed.dropFirst()), radix: 16) else { return nil }
         let r = Double((intValue & 0xFF0000) >> 16) / 255.0
         let g = Double((intValue & 0x00FF00) >> 8) / 255.0
         let b = Double(intValue & 0x0000FF) / 255.0
@@ -19,62 +21,66 @@ struct TextPreviewCard: View {
     }
 
     var body: some View {
-        if let info = detectedColorInfo {
-            // Display as color preview with overlaid hex code (no RGB)
-            let contrastingColor: Color = info.luminance > 0.5 ? .black : .white
-            RoundedRectangle(cornerRadius: 12)
-                .fill(info.color)
-                .overlay(
-                    // Hex code centered on color with intelligent contrast
-                    Text(content.plainText.uppercased())
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(contrastingColor)
-                )
-                .overlay(
-                    // Border for better definition
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.primary.opacity(0.15), lineWidth: 1)
-                )
-                .padding(.bottom, 16) // Bottom padding only
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            // Display as regular text
-            VStack(alignment: .leading, spacing: 8) {
-                // Content title - exact colors from HTML reference
-                if content.plainText.count > 50 {
-                    Text(String(content.plainText.prefix(40)) + (content.plainText.count > 40 ? "..." : ""))
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(colorScheme == .light ?
-                            Color(.sRGB, red: 0.118, green: 0.161, blue: 0.231, opacity: 1.0) : // #1e293b
-                            Color(.sRGB, red: 0.9, green: 0.9, blue: 0.9, opacity: 1.0)
-                        )
-                        .lineLimit(1)
-                }
+        Group {
+            if let info = colorInfo {
+                // Display as color preview with overlaid hex code (no RGB)
+                let contrastingColor: Color = info.luminance > 0.5 ? .black : .white
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(info.color)
+                    .overlay(
+                        // Hex code centered on color with intelligent contrast
+                        Text(content.plainText.uppercased())
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(contrastingColor)
+                    )
+                    .overlay(
+                        // Border for better definition
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.primary.opacity(0.15), lineWidth: 1)
+                    )
+                    .padding(.bottom, 16) // Bottom padding only
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // Display as regular text
+                VStack(alignment: .leading, spacing: 8) {
+                    // Content title - exact colors from HTML reference
+                    if content.plainText.count > 50 {
+                        Text(String(content.plainText.prefix(40)) + (content.plainText.count > 40 ? "..." : ""))
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(colorScheme == .light ?
+                                Color(.sRGB, red: 0.118, green: 0.161, blue: 0.231, opacity: 1.0) : // #1e293b
+                                Color(.sRGB, red: 0.9, green: 0.9, blue: 0.9, opacity: 1.0)
+                            )
+                            .lineLimit(1)
+                    }
 
-                // Main content - exact colors from HTML reference
-                if content.plainText.count <= 50 {
-                    Text(content.plainText)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(colorScheme == .light ?
-                            Color(.sRGB, red: 0.118, green: 0.161, blue: 0.231, opacity: 1.0) : // #1e293b
-                            Color(.sRGB, red: 0.9, green: 0.9, blue: 0.9, opacity: 1.0)
-                        )
-                        .lineLimit(3)
-                } else {
-                    Text(content.plainText)
-                        .font(.system(size: 14))
-                        .foregroundStyle(colorScheme == .light ?
-                            Color(.sRGB, red: 0.2, green: 0.322, blue: 0.333, opacity: 1.0) : // #334155
-                            Color(.sRGB, red: 0.8, green: 0.8, blue: 0.8, opacity: 1.0)
-                        )
-                        .lineLimit(6)
-                        .lineSpacing(1.5)
+                    // Main content - exact colors from HTML reference
+                    if content.plainText.count <= 50 {
+                        Text(content.plainText)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(colorScheme == .light ?
+                                Color(.sRGB, red: 0.118, green: 0.161, blue: 0.231, opacity: 1.0) : // #1e293b
+                                Color(.sRGB, red: 0.9, green: 0.9, blue: 0.9, opacity: 1.0)
+                            )
+                            .lineLimit(3)
+                    } else {
+                        Text(content.plainText)
+                            .font(.system(size: 14))
+                            .foregroundStyle(colorScheme == .light ?
+                                Color(.sRGB, red: 0.2, green: 0.322, blue: 0.333, opacity: 1.0) : // #334155
+                                Color(.sRGB, red: 0.8, green: 0.8, blue: 0.8, opacity: 1.0)
+                            )
+                            .lineLimit(6)
+                            .lineSpacing(1.5)
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .task {
+            colorInfo = Self.parseColorInfo(from: content.plainText)
         }
     }
-
 }
 
 // MARK: - Rich Text Preview Card

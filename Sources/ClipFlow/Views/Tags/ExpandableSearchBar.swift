@@ -10,7 +10,6 @@ struct ExpandableSearchBar: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var isTextFieldFocused: Bool
-    @State private var searchTask: Task<Void, Never>?
 
     init(
         searchText: Binding<String>,
@@ -51,20 +50,10 @@ struct ExpandableSearchBar: View {
                 Text("Search")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(Color.primary.opacity(colorScheme == .light ? 0.04 : 0.08))
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
-                    )
-            )
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
+        .buttonStyle(.glass)
     }
 
     // MARK: - Expanded View (Search Field)
@@ -82,26 +71,8 @@ struct ExpandableSearchBar: View {
                 .font(.system(size: 12))
                 .focused($isTextFieldFocused)
                 .onSubmit {
-                    // Cancel any pending debounced search
-                    searchTask?.cancel()
-                    // Perform immediate search on Enter
+                    // Enter triggers deep DB search via onSearch callback
                     performSearch()
-                }
-                .onChange(of: searchText) { _, newValue in
-                    // Cancel previous search task
-                    searchTask?.cancel()
-
-                    // Debounce search by 300ms
-                    searchTask = Task {
-                        try? await Task.sleep(nanoseconds: 300_000_000)
-
-                        // Check if task wasn't cancelled and value didn't change
-                        if !Task.isCancelled && searchText == newValue {
-                            await MainActor.run {
-                                performSearch()
-                            }
-                        }
-                    }
                 }
                 .frame(minWidth: 120, maxWidth: 200)
 
@@ -112,7 +83,7 @@ struct ExpandableSearchBar: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.borderless)
                 .transition(.scale.combined(with: .opacity))
             }
 
@@ -122,18 +93,11 @@ struct ExpandableSearchBar: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12))
-                .overlay(
-                    Capsule()
-                        .stroke(Color.customAccent.opacity(0.3), lineWidth: 1.5)
-                )
-        )
+        .glassEffect(.regular.tint(Color.accentColor.opacity(0.15)).interactive(), in: .capsule)
         .onAppear {
             isTextFieldFocused = true
         }

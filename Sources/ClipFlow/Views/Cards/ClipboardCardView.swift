@@ -20,6 +20,9 @@ struct ClipboardCardView: View {
     @State private var itemTags: [Tag] = []
     @State private var allTags: [Tag] = []
 
+    // PERFORMANCE: Cache time-ago string — RelativeDateTimeFormatter + Date() is non-trivial
+    @State private var cachedTimeAgo = ""
+
     // PERFORMANCE: Cache icon conversion - NSImage(data:) is EXPENSIVE!
     // This prevents 10-15 conversions per filter change
     @State private var cachedAppIcon: Image? = nil
@@ -50,11 +53,13 @@ struct ClipboardCardView: View {
             cardFooter
         }
         .frame(width: cardWidth, height: 250)
-        .background {
-            RoundedRectangle(cornerRadius: 20)
-                .fill(.ultraThinMaterial)
-        }
-        .glassCard(isSelected: isSelected, cornerRadius: 20)
+        .containerShape(.rect(cornerRadius: 20))
+        .glassEffect(
+            isSelected
+                ? .regular.tint(Color.accentColor.opacity(0.14)).interactive()
+                : .regular.interactive(),
+            in: .rect(cornerRadius: 20)
+        )
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
@@ -242,6 +247,10 @@ struct ClipboardCardView: View {
             allTags = TagService.shared.getAllTags()
             itemTags = allTags.filter { item.tagIds.contains($0.id) }
 
+            // PERFORMANCE: Cache time-ago once — avoids formatter + Date() on every render
+            cachedTimeAgo = Self.relativeDateFormatter.localizedString(
+                for: item.timestamps.createdAt, relativeTo: Date())
+
             // PERFORMANCE: NSImage(data:) decodes TIFF with multiple resolutions — move off main thread
             if let iconData = item.source.applicationIcon {
                 Task.detached(priority: .utility) {
@@ -251,9 +260,9 @@ struct ClipboardCardView: View {
             }
 
             // Decode NSImage and write temp file — both needed before the user drags.
-            // .userInitiated priority so they're ready quickly after the card appears.
+            // .utility priority avoids saturating CPU threads when many image cards appear.
             if case .image(let imageContent) = item.content {
-                Task.detached(priority: .userInitiated) {
+                Task.detached(priority: .utility) {
                     let imageData = imageContent.data
                     let nsImage = NSImage(data: imageData)
                     let tempPath = await createTemporaryImageFileAsync(from: imageContent)
@@ -273,20 +282,18 @@ struct ClipboardCardView: View {
     @Environment(\.colorScheme) private var colorScheme
 
 
+    
 
     private var cardHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                // Subtle content type badge
+                // Content type badge — concentric corners match card radius
                 Text(contentTypeInfo.name.uppercased())
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.primary.opacity(0.08))
-                    )
+                    .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
                 Spacer()
 
@@ -329,32 +336,18 @@ struct ClipboardCardView: View {
 
     private var cardFooter: some View {
         VStack(spacing: 0) {
-            // Exact divider from HTML reference
-            Rectangle()
-                .fill(colorScheme == .light ?
-                    Color(.sRGB, red: 0.886, green: 0.91, blue: 0.941, opacity: 0.5) : // rgba(226, 232, 240, 0.5)
-                    Color(.sRGB, red: 0.4, green: 0.4, blue: 0.4, opacity: 0.3)
-                )
-                .frame(height: 1)
+            Divider()
 
             HStack {
-                // Metadata - exact colors from HTML reference
                 Text(metadataText)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(colorScheme == .light ?
-                        Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) : // #94a3b8
-                        Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
-                    )
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
-                // Timestamp - exact colors from HTML reference
                 Text(timeAgoText)
                     .font(.system(size: 11))
-                    .foregroundStyle(colorScheme == .light ?
-                        Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) : // #94a3b8
-                        Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
-                    )
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -394,9 +387,7 @@ struct ClipboardCardView: View {
         return f
     }()
 
-    private var timeAgoText: String {
-        Self.relativeDateFormatter.localizedString(for: item.timestamps.createdAt, relativeTo: Date())
-    }
+    private var timeAgoText: String { cachedTimeAgo }
     
     
 
@@ -481,7 +472,6 @@ struct ClipboardCardView: View {
     private var appIconBadge: some View {
         Group {
             if let cachedIcon = cachedAppIcon {
-                // Use cached icon - FAST!
                 cachedIcon
                     .resizable()
                     .interpolation(.high)
@@ -491,20 +481,12 @@ struct ClipboardCardView: View {
                     .clipShape(Circle())
                     .overlay(
                         Circle()
-                            .stroke(colorScheme == .light ?
-                                Color.white.opacity(0.8) :
-                                Color.black.opacity(0.4),
-                                lineWidth: 1.5
-                            )
+                            .stroke(.separator, lineWidth: 1.5)
                     )
             } else {
-                // Fallback to SF Symbol if no icon cached
                 Image(systemName: "app.badge")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(colorScheme == .light ?
-                        Color(.sRGB, red: 0.581, green: 0.639, blue: 0.722, opacity: 1.0) :
-                        Color(.sRGB, red: 0.7, green: 0.7, blue: 0.7, opacity: 1.0)
-                    )
+                    .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
             }
         }
@@ -520,10 +502,6 @@ struct ClipboardCardView: View {
                         Circle()
                             .fill(tag.color.swiftUIColor)
                             .frame(width: 8, height: 8)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-                            )
 
                         Text(tag.name)
                             .font(.system(size: 10, weight: .semibold))
@@ -531,10 +509,7 @@ struct ClipboardCardView: View {
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(tag.color.swiftUIColor.opacity(0.15))
-                    )
+                    .background(.quaternary, in: .rect(corners: .concentric(minimum: 8), isUniform: true))
                 }
 
                 if itemTags.count > 2 {

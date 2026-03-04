@@ -48,85 +48,70 @@ struct TagChipView: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            // Tag color indicator - clickable to open color picker
-            Circle()
-                .fill(tagColor)
-                .frame(width: 10, height: 10)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-                )
-                .onTapGesture {
-                    openColorPicker()
-                }
-                .popover(isPresented: $showColorPicker) {
-                    VStack(spacing: 0) {
-                        TagColorPicker(selectedColor: $selectedColorForEdit) { newColor in
-                            handleColorChange(newColor)
-                        }
-                    }
-                    .frame(width: 220)
-                }
-                .help("Click to change color")
-
-            // Tag name or inline editor
-            if isRenaming {
-                TextField("", text: $editingName)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .focused($isTextFieldFocused)
-                    .onSubmit {
-                        saveRename()
-                    }
-                    .onKeyPress(.escape) {
-                        cancelRename()
-                        return .handled
-                    }
-                    .frame(minWidth: 40, maxWidth: 120)
-            } else {
-                Text(displayName)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                    .lineLimit(1)
-                    .foregroundStyle(textColor)
-                    .onTapGesture(count: 2) {
-                        startRename()
-                    }
-                    .onTapGesture {
-                        if !isRenaming {
-                            onTap()
-                        }
-                    }
-            }
-
-            // Item count badge (if > 0)
-            if itemCount > 0 && !isRenaming {
-                Text("\(itemCount)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(badgeTextColor)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule()
-                            .fill(badgeBackgroundColor)
+        Button(action: {
+            if !isRenaming { onTap() }
+        }) {
+            HStack(spacing: 6) {
+                // Tag color indicator - clickable to open color picker
+                Circle()
+                    .fill(tagColor)
+                    .frame(width: 10, height: 10)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
                     )
+                    .onTapGesture {
+                        openColorPicker()
+                    }
+                    .popover(isPresented: $showColorPicker) {
+                        VStack(spacing: 0) {
+                            TagColorPicker(selectedColor: $selectedColorForEdit) { newColor in
+                                handleColorChange(newColor)
+                            }
+                        }
+                        .frame(width: 220)
+                    }
+                    .help("Click to change color")
+
+                // Tag name or inline editor
+                if isRenaming {
+                    TextField("", text: $editingName)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .focused($isTextFieldFocused)
+                        .onSubmit {
+                            saveRename()
+                        }
+                        .onKeyPress(.escape) {
+                            cancelRename()
+                            return .handled
+                        }
+                        .frame(minWidth: 40, maxWidth: 120)
+                } else {
+                    Text(displayName)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .lineLimit(1)
+                        .onTapGesture(count: 2) {
+                            startRename()
+                        }
+                }
+
+                // Item count badge (if > 0)
+                if itemCount > 0 && !isRenaming {
+                    Text("\(itemCount)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule()
+                                .fill(Color.secondary.opacity(0.12))
+                        )
+                }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        // Fallback styling for macOS < 26
-        .background {
-            if #available(macOS 26, *) { Color.clear } else { chipBackground }
-        }
-        .overlay {
-            if #available(macOS 26, *) { } else { chipBorder }
-        }
-        // Liquid Glass on macOS 26+: tint by tag colour when selected or drop-targeted
-        .glassChip(tint: (isSelected || isDropTarget) ? tagColor.opacity(isDropTarget ? 0.5 : 0.35) : nil)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .buttonStyle(.glass(chipGlass))
         .onDrop(of: [UTType.clipboardItemID.identifier], isTargeted: $isDropTarget) { providers in
             guard let provider = providers.first else { return false }
 
@@ -151,57 +136,17 @@ struct TagChipView: View {
         }
     }
 
-    // MARK: - Color Computations
+    // MARK: - Glass Configuration
 
     private var tagColor: Color { tag.color.swiftUIColor }
 
-    private var textColor: Color {
-        if isSelected {
-            return colorScheme == .dark ? .white : .primary
+    /// Liquid Glass configuration: tinted when selected or targeted for drop
+    private var chipGlass: Glass {
+        if isSelected || isDropTarget {
+            .regular.tint(tagColor.opacity(isDropTarget ? 0.5 : 0.35)).interactive()
         } else {
-            return isHovering ? .primary : .secondary
+            .regular.interactive()
         }
-    }
-
-    private var badgeTextColor: Color {
-        if isSelected {
-            return colorScheme == .dark ? .white.opacity(0.9) : .primary
-        } else {
-            return .secondary
-        }
-    }
-
-    private var badgeBackgroundColor: Color {
-        if isSelected {
-            return tagColor.opacity(0.25)
-        } else {
-            return Color.secondary.opacity(0.12)
-        }
-    }
-
-    private var chipBackground: some View {
-        Capsule()
-            .fill(isDropTarget ?
-                tagColor.opacity(0.35) :  // Strong highlight when drop target
-                (isSelected ?
-                    tagColor.opacity(colorScheme == .dark ? 0.25 : 0.15) :
-                    (isHovering ?
-                        Color.primary.opacity(0.08) :
-                        Color.primary.opacity(colorScheme == .light ? 0.04 : 0.08))))
-    }
-
-    private var chipBorder: some View {
-        Capsule()
-            .stroke(
-                isDropTarget ?
-                    tagColor.opacity(0.8) :  // Strong border when drop target
-                    (isSelected ?
-                        tagColor.opacity(colorScheme == .dark ? 0.5 : 0.4) :
-                        (isHovering ?
-                            Color.primary.opacity(0.2) :
-                            Color.primary.opacity(0.1))),
-                lineWidth: isDropTarget ? 2.5 : (isSelected ? 1.5 : 0.5)
-            )
     }
 
     // MARK: - Color Change Methods

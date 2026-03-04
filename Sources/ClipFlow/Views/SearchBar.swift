@@ -30,11 +30,6 @@ struct SearchBar: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background {
-                if #available(macOS 26, *) { Color.clear } else {
-                    RoundedRectangle(cornerRadius: 8).fill(.regularMaterial)
-                }
-            }
             .glassControl(cornerRadius: 8)
 
             if isSearching {

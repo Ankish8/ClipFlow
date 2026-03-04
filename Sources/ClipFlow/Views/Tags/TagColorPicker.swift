@@ -28,10 +28,6 @@ struct TagColorPicker: View {
             }
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.primary.opacity(colorScheme == .light ? 0.04 : 0.08))
-        )
     }
 
     private func colorButton(for color: TagColor) -> some View {
@@ -45,32 +41,19 @@ struct TagColorPicker: View {
             }
         }) {
             ZStack {
-                // Color circle
                 Circle()
                     .fill(swiftUIColor)
                     .frame(width: 28, height: 28)
 
-                // Checkmark if selected
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                 }
-
-                // Border
-                Circle()
-                    .stroke(
-                        isSelected ?
-                            Color.primary.opacity(0.3) :
-                            Color.primary.opacity(0.1),
-                        lineWidth: isSelected ? 2 : 1
-                    )
-                    .frame(width: 28, height: 28)
             }
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
+        .buttonStyle(.glass(.regular.tint(swiftUIColor)))
         .help(color.displayName)
     }
 }
@@ -90,26 +73,17 @@ struct TagColorPickerMenu: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(TagColor.allCases, id: \.self) { color in
-                let isSelected = selectedColor == color
                 let swiftUIColor = color.swiftUIColor
 
                 Button(action: {
                     selectedColor = color
                     onColorSelected?(color)
                 }) {
-                    ZStack {
-                        Circle()
-                            .fill(swiftUIColor)
-                            .frame(width: 20, height: 20)
-
-                        if isSelected {
-                            Circle()
-                                .stroke(Color.primary, lineWidth: 2)
-                                .frame(width: 22, height: 22)
-                        }
-                    }
+                    Circle()
+                        .fill(swiftUIColor)
+                        .frame(width: 20, height: 20)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.glass(.regular.tint(swiftUIColor)))
             }
         }
         .padding(.vertical, 4)

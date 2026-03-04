@@ -35,20 +35,10 @@ struct InlineTagCreator: View {
                 Text("New Tag")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(Color.primary.opacity(colorScheme == .light ? 0.04 : 0.08))
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
-                    )
-            )
         }
-        .buttonStyle(PlainButtonStyle())
-        .focusEffectDisabled()
+        .buttonStyle(.glass)
     }
 
     // MARK: - Creation View
@@ -62,12 +52,8 @@ struct InlineTagCreator: View {
                 Circle()
                     .fill(selectedColor.swiftUIColor)
                     .frame(width: 16, height: 16)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.primary.opacity(0.2), lineWidth: 1)
-                    )
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(.glass(.regular.tint(selectedColor.swiftUIColor)))
             .popover(isPresented: $showColorPicker) {
                 TagColorPicker(selectedColor: $selectedColor)
                     .frame(width: 200)
@@ -109,7 +95,7 @@ struct InlineTagCreator: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.green)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.borderless)
             }
 
             // Cancel button
@@ -118,20 +104,13 @@ struct InlineTagCreator: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(PlainButtonStyle())
+            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(Color.primary.opacity(colorScheme == .light ? 0.06 : 0.12))
-                .overlay(
-                    Capsule()
-                        .stroke(showError ?
-                            Color.red.opacity(0.6) :
-                            Color.customAccent.opacity(0.3),
-                            lineWidth: showError ? 2.0 : 1.5)
-                )
+        .glassEffect(
+            showError ? .regular.tint(.red.opacity(0.3)).interactive() : .regular.tint(Color.accentColor.opacity(0.15)).interactive(),
+            in: .capsule
         )
         .modifier(ShakeEffect(shakes: showError ? 2 : 0))
         .onAppear {

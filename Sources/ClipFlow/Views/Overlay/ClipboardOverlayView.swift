@@ -38,17 +38,23 @@ struct ClipboardOverlayView: View {
             }
         }
 
+        // Apply in-memory text filter — instant, no DB hit
+        // Enter key triggers the deep DB search via ExpandableSearchBar.onSubmit
+        if !searchText.isEmpty {
+            items = items.filter { item in
+                item.content.displayText.localizedCaseInsensitiveContains(searchText)
+                    || (item.source.applicationName?.localizedCaseInsensitiveContains(searchText) ?? false)
+            }
+        }
+
         filteredItems = items
         enumeratedFilteredItems = Array(items.enumerated())
     }
 
     var body: some View {
-        // TimelineView(.animation) fires a new render context every display frame (~60fps).
-        // SwiftUI's .glassEffect() reads the backdrop during each render pass, so this
-        // keeps the Liquid Glass live-compositing without needing key-window status.
-        TimelineView(.animation) { _ in
-            overlayContent
-        }
+        // NSGlassEffectView live-compositing is kept alive by makeKeyAndOrderFront(nil)
+        // on the NSPanel — no TimelineView needed. See MEMORY.md: Liquid Glass Overlay.
+        overlayContent
     }
 
     @ViewBuilder
@@ -65,12 +71,14 @@ struct ClipboardOverlayView: View {
 
             Spacer().frame(height: 8)
 
-            // Main cards container - full width
+            // Main cards container - wrapped in GlassEffectContainer for morphing
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    cardStack
-                        .padding(.horizontal, 16)
-                        .frame(maxWidth: .infinity)
+                    GlassEffectContainer(spacing: 8) {
+                        cardStack
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity)
                 }
                 .frame(height: 252)
                 .mask {
@@ -99,6 +107,9 @@ struct ClipboardOverlayView: View {
             updateFilteredItems()
         }
         .onChange(of: viewModel.items) {
+            updateFilteredItems()
+        }
+        .onChange(of: searchText) {
             updateFilteredItems()
         }
         .focusable()
