@@ -418,34 +418,53 @@ class ClipboardViewModel {
     /// Optimistically set pin state with immediate local update.
     /// Uses explicit set (not toggle) to avoid race with stale cache.
     func setPinned(_ pinned: Bool, for item: ClipboardItem) {
-        guard item.isPinned != pinned else { return }
+        NSLog("📌 VM.setPinned called: pinned=\(pinned) item.isPinned=\(item.isPinned)")
+        guard item.isPinned != pinned else {
+            NSLog("📌 VM.setPinned guard failed — already in desired state")
+            return
+        }
         // Optimistic update first so UI reflects change immediately
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
             var updated = items[idx]
             updated.isPinned = pinned
             items[idx] = updated
+            NSLog("📌 VM.setPinned optimistic update done, items[\(idx)].isPinned=\(items[idx].isPinned)")
+        } else {
+            NSLog("📌 VM.setPinned: item not found in items array!")
         }
         Task {
             do {
                 try await clipboardService.setItemPinned(itemId: item.id, pinned: pinned)
             } catch {
+                NSLog("❌ VM.setPinned error: \(error)")
                 errorMessage = error.localizedDescription
             }
         }
     }
 
-    // MARK: - Custom Name (Rename) — UserDefaults, no schema change needed
+    // MARK: - Custom Name (Rename)
+    // Stored as @Observable so card headers re-render instantly on rename.
+    // Persisted to UserDefaults for across-launch durability.
 
     private static let customNamesKey = "ClipFlow.customItemNames"
 
+    // @Observable tracking: reads of customNames in SwiftUI body auto-register deps.
+    var customNames: [String: String] = {
+        (UserDefaults.standard.dictionary(forKey: customNamesKey) as? [String: String]) ?? [:]
+    }()
+
     func customName(for itemId: UUID) -> String? {
-        let dict = UserDefaults.standard.dictionary(forKey: Self.customNamesKey) as? [String: String]
-        return dict?[itemId.uuidString]
+        customNames[itemId.uuidString]
     }
 
     func setCustomName(_ name: String?, for itemId: UUID) {
-        var dict = (UserDefaults.standard.dictionary(forKey: Self.customNamesKey) as? [String: String]) ?? [:]
-        if let n = name, !n.isEmpty { dict[itemId.uuidString] = n } else { dict.removeValue(forKey: itemId.uuidString) }
-        UserDefaults.standard.set(dict, forKey: Self.customNamesKey)
+        let key = itemId.uuidString
+        if let n = name, !n.isEmpty {
+            customNames[key] = n
+        } else {
+            customNames.removeValue(forKey: key)
+        }
+        // Persist for next launch
+        UserDefaults.standard.set(customNames, forKey: Self.customNamesKey)
     }
 }

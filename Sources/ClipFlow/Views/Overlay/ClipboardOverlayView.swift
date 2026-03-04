@@ -6,19 +6,10 @@ struct ClipboardOverlayView: View {
     @State private var selectedIndex: Int = 0
     @State private var selectedTagIds: Set<UUID> = []
 
-    // Search state
+    // Search state — raw text from the search field
     @State private var searchText = ""
-
-    // PERFORMANCE: Pre-sorted base (pinned first, then recency-order).
-    // Rebuilt only when viewModel.items changes — NOT on every tag/search change.
-    @State private var sortedBaseItems: [ClipboardItem] = []
-
-    // PERFORMANCE: Cache filtered items instead of recomputing on every render
-    @State private var filteredItems: [ClipboardItem] = []
-    // PERFORMANCE: Avoid Array(enumerated()) allocation on every render
-    @State private var enumeratedFilteredItems: [(offset: Int, element: ClipboardItem)] = []
-
-    // Debounce: cancel previous search task before starting a new one
+    // Debounced text actually used for filtering (updated 80ms after last keystroke)
+    @State private var debouncedSearch = ""
     @State private var searchDebounceTask: Task<Void, Never>?
 
     // Default initializer creates its own viewModel (for standalone use)
@@ -33,46 +24,35 @@ struct ClipboardOverlayView: View {
         self.viewModel = viewModel
     }
 
-    // PERFORMANCE: Sort once when items change (O(n log n)), not on every tag switch.
-    // viewModel.items are newest-first; pinned items float to front.
-    private func rebuildSortedBase() {
-        sortedBaseItems = viewModel.items.sorted { $0.isPinned && !$1.isPinned }
-    }
+    // MARK: - Derived display data
+    // Computed directly from @Observable viewModel.items + @State filters.
+    // SwiftUI auto-tracks all reads here — no onChange synchronisation needed.
+    // Pinned items sort first; then newest-first (viewModel.items order).
+    private var filteredItems: [ClipboardItem] {
+        var items = viewModel.items.sorted { $0.isPinned && !$1.isPinned }
 
-    // PERFORMANCE: Filter from pre-sorted base — O(n) only, no sort cost.
-    // Called on every tag/search change; sorting is handled by rebuildSortedBase().
-    private func updateFilteredItems() {
-        var items = sortedBaseItems
-
-        // Apply tag filtering — isDisjoint avoids allocating an intersection Set
         if !selectedTagIds.isEmpty {
             items = items.filter { !$0.tagIds.isDisjoint(with: selectedTagIds) }
         }
 
-        // Apply in-memory text filter — instant, no DB hit
-        // Enter key triggers the deep DB search via ExpandableSearchBar.onSubmit
-        if !searchText.isEmpty {
-            let query = searchText
-            items = items.filter { item in
-                item.content.displayText.localizedCaseInsensitiveContains(query)
-                    || (item.source.applicationName?.localizedCaseInsensitiveContains(query) ?? false)
+        if !debouncedSearch.isEmpty {
+            let q = debouncedSearch
+            items = items.filter {
+                $0.content.displayText.localizedCaseInsensitiveContains(q)
+                    || ($0.source.applicationName?.localizedCaseInsensitiveContains(q) ?? false)
             }
         }
 
-        filteredItems = items
-        enumeratedFilteredItems = Array(items.enumerated())
+        return items
     }
 
     var body: some View {
-        // NSGlassEffectView live-compositing is kept alive by makeKeyAndOrderFront(nil)
-        // on the NSPanel — no TimelineView needed. See MEMORY.md: Liquid Glass Overlay.
         overlayContent
     }
 
     @ViewBuilder
     private var overlayContent: some View {
         VStack(spacing: 0) {
-            // Horizontal tag filter bar (search field always visible inside)
             TagFilterBarView(
                 viewModel: viewModel,
                 selectedTagIds: $selectedTagIds,
@@ -82,7 +62,6 @@ struct ClipboardOverlayView: View {
 
             Spacer().frame(height: 8)
 
-            // Main cards container - wrapped in GlassEffectContainer for morphing
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     GlassEffectContainer(spacing: 8) {
@@ -111,26 +90,13 @@ struct ClipboardOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background { Color.clear }
         .overlayPanel(cornerRadius: 32)
-        .onAppear {
-            rebuildSortedBase()
-            updateFilteredItems()
-        }
-        .onChange(of: selectedTagIds) {
-            // Tag changes are instant — filter from already-sorted base
-            updateFilteredItems()
-        }
-        .onChange(of: viewModel.items) {
-            // Items changed — re-sort once, then re-filter
-            rebuildSortedBase()
-            updateFilteredItems()
-        }
         .onChange(of: searchText) {
-            // Debounce: wait 80ms after last keystroke before filtering
+            // Debounce: update debouncedSearch 80ms after last keystroke
             searchDebounceTask?.cancel()
             searchDebounceTask = Task {
                 try? await Task.sleep(for: .milliseconds(80))
                 guard !Task.isCancelled else { return }
-                updateFilteredItems()
+                debouncedSearch = searchText
             }
         }
     }
@@ -140,15 +106,12 @@ struct ClipboardOverlayView: View {
     // MARK: - Card Stack
 
     private var cardStack: some View {
-        cardStackContent
-    }
-
-    private var cardStackContent: some View {
-        LazyHStack(spacing: 16) {
-            if enumeratedFilteredItems.count <= 6 {
+        let items = Array(filteredItems.enumerated())
+        return LazyHStack(spacing: 16) {
+            if items.count <= 6 {
                 Spacer().frame(minWidth: 0)
             }
-            ForEach(enumeratedFilteredItems, id: \.element.id) { index, item in
+            ForEach(items, id: \.element.id) { index, item in
                 ClipboardCardView(
                     item: item,
                     index: index + 1,
@@ -157,17 +120,13 @@ struct ClipboardOverlayView: View {
                 )
                 .id(item.id)
                 .onTapGesture {
-                    selectItem(index: index)
+                    selectedIndex = index
                 }
             }
-            if enumeratedFilteredItems.count <= 6 {
+            if items.count <= 6 {
                 Spacer().frame(minWidth: 0)
             }
         }
-    }
-
-    private func selectItem(index: Int) {
-        selectedIndex = index
     }
 
     private func selectAndPaste(_ item: ClipboardItem, index: Int) {
@@ -190,7 +149,8 @@ struct ClipboardOverlayView: View {
     }
 
     func navigateRight() {
-        if selectedIndex < filteredItems.count - 1 { selectedIndex += 1 }
+        let count = filteredItems.count
+        if selectedIndex < count - 1 { selectedIndex += 1 }
     }
 
     func selectByNumber(_ number: Int) {
@@ -201,13 +161,15 @@ struct ClipboardOverlayView: View {
     }
 
     func pasteCurrentSelection() {
-        guard selectedIndex < filteredItems.count else { return }
-        selectAndPaste(filteredItems[selectedIndex], index: selectedIndex)
+        let items = filteredItems
+        guard selectedIndex < items.count else { return }
+        selectAndPaste(items[selectedIndex], index: selectedIndex)
     }
 
     func deleteCurrentSelection() {
-        guard selectedIndex < filteredItems.count else { return }
-        viewModel.deleteItem(filteredItems[selectedIndex])
+        let items = filteredItems
+        guard selectedIndex < items.count else { return }
+        viewModel.deleteItem(items[selectedIndex])
         if selectedIndex >= filteredItems.count && selectedIndex > 0 {
             selectedIndex -= 1
         }

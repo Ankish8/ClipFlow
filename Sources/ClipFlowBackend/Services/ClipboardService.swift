@@ -348,11 +348,15 @@ public class ClipboardService: ClipboardServiceAPI {
     /// Explicitly set pin state — avoids toggle race when cache is stale.
     public func setItemPinned(itemId: UUID, pinned: Bool) async throws {
         try await performanceMonitor.measure(operation: "set_pinned") {
+            NSLog("📌 setItemPinned called: id=\(itemId) pinned=\(pinned)")
             guard var item = try await storageService.getItem(id: itemId) else {
+                NSLog("❌ setItemPinned: item not found")
                 throw ClipboardError.invalidInput("Item not found")
             }
+            NSLog("📌 fetched item isPinned=\(item.isPinned), setting to \(pinned)")
             item.isPinned = pinned
             try await storageService.updateItem(item)
+            NSLog("📌 saved, sending update isPinned=\(item.isPinned)")
             _itemUpdates.send(item)
         }
     }
