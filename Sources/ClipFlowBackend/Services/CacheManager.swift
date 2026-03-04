@@ -50,11 +50,12 @@ public actor CacheManager {
     public func cacheItem(_ item: ClipboardItem, hash: String) async {
         let cachedItem = CachedItem(item: item, cachedAt: Date())
 
-        // Update memory cache
+        // Update memory cache — always replace stored data so mutations (pin, rename, etc.) are reflected
         if let existingItem = memoryCache[item.id],
            let existingAccessNode = existingItem.accessNode {
             accessOrder.moveToTail(node: existingAccessNode)
-            existingItem.accessNode = existingAccessNode
+            cachedItem.accessNode = existingAccessNode  // reuse LRU node
+            memoryCache[item.id] = cachedItem           // update stored item data
         } else {
             let node = accessOrder.append(item.id)
             cachedItem.accessNode = node

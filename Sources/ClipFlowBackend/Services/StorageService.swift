@@ -74,13 +74,9 @@ public class StorageService {
             // Check cache first
             if let cachedItem = await cacheManager.getItem(id: id) {
                 cacheHits += 1
-
-                // Update access time
-                var item = cachedItem
-                item.timestamps.markAccessed()
-                try? await databaseManager.updateItem(item)
-
-                return item
+                // Return cached item directly — do NOT write back to DB,
+                // which would overwrite correct DB state with potentially stale cache fields.
+                return cachedItem
             }
 
             cacheMisses += 1
