@@ -13,7 +13,6 @@ struct ClipboardCardView: View {
 
     @State private var cachedImagePath: String? = nil
     @State private var cachedNSImage: NSImage? = nil
-    @State private var showCopyFeedback = false
     @State private var showTagMenu = false
     @State private var showNewTagCreator = false
     @State private var showRenameSheet = false
@@ -75,8 +74,6 @@ struct ClipboardCardView: View {
                 : .regular.tint(tagTintColor.opacity(0.1)).interactive(),
             in: .rect(cornerRadius: 20)
         )
-        .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
-        .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
         .overlay {
             // AppKit drag overlay for ALL card types.
@@ -178,30 +175,14 @@ struct ClipboardCardView: View {
                     .padding(.vertical, 3)
                     .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
-                // Pin + Copy buttons — shown when pinned or hovering.
-                // hitTest returns nil for the header region so SwiftUI buttons
-                // receive clicks and .onHover on HeaderIconButton works normally.
+                // Pin button — shown when pinned or hovering.
                 if item.isPinned || isHoveringHeader {
-                    HStack(spacing: 4) {
-                        HeaderIconButton(
-                            icon: showCopyFeedback ? "checkmark" : "doc.on.doc",
-                            activeColor: showCopyFeedback ? .green : .secondary
-                        ) {
-                            withAnimation(.easeInOut(duration: 0.12)) { showCopyFeedback = true }
-                            viewModel.copyToClipboard(item)
-                            Task {
-                                try? await Task.sleep(for: .milliseconds(700))
-                                withAnimation(.easeInOut(duration: 0.12)) { showCopyFeedback = false }
-                            }
-                        }
-
-                        HeaderIconButton(
-                            icon: item.isPinned ? "pin.fill" : "pin",
-                            activeColor: item.isPinned ? .white : .secondary,
-                            rotation: item.isPinned ? 45 : 0
-                        ) {
-                            viewModel.setPinned(!item.isPinned, for: item)
-                        }
+                    HeaderIconButton(
+                        icon: item.isPinned ? "pin.fill" : "pin",
+                        activeColor: item.isPinned ? .white : .secondary,
+                        rotation: item.isPinned ? 45 : 0
+                    ) {
+                        viewModel.setPinned(!item.isPinned, for: item)
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     .animation(.easeInOut(duration: 0.15), value: isHoveringHeader)
