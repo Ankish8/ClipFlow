@@ -123,10 +123,11 @@ struct ImagePreviewCard: View {
     var body: some View {
         Group {
             if let img = renderedImage {
-                // Use image as .background so SwiftUI always clips it to the
-                // placeholder's bounds — avoids scaledToFill overflowing into
-                // sibling views (header/footer) in the parent VStack.
-                Color.clear
+                // Color.black.opacity(0.001) instead of Color.clear:
+                // SwiftUI skips hit-testing on fully-transparent (clear) views,
+                // creating a gap in the drag overlay's coverage. A near-zero
+                // opacity registers as a valid hit target across the image region.
+                Color.black.opacity(0.001)
                     .background(
                         img
                             .resizable()

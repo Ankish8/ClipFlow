@@ -21,6 +21,7 @@ struct ClipboardCardView: View {
     @State private var editWindow: NSWindow? = nil
     @State private var previewWindow: NSWindow? = nil
     @State private var tagTintColor: Color = .clear
+    @State private var isHoveringHeader = false
 
     // PERFORMANCE: Cache computed tags instead of filtering on every render
     @State private var itemTags: [Tag] = []
@@ -179,12 +180,18 @@ struct ClipboardCardView: View {
                     .padding(.vertical, 3)
                     .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
-                // Pin indicator
-                if item.isPinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(45))
+                // Pin button — always visible when pinned, revealed on hover
+                if item.isPinned || isHoveringHeader {
+                    Button {
+                        viewModel.setPinned(!item.isPinned, for: item)
+                    } label: {
+                        Image(systemName: item.isPinned ? "pin.fill" : "pin")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(item.isPinned ? Color.accentColor : .secondary)
+                            .rotationEffect(.degrees(item.isPinned ? 45 : 0))
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity.combined(with: .scale(scale: 0.7)))
                 }
 
                 Spacer()
@@ -195,6 +202,7 @@ struct ClipboardCardView: View {
             .padding(.horizontal, 14)
             .padding(.top, 10)
             .padding(.bottom, 10)
+            .onHover { isHoveringHeader = $0 }
 
             Divider()
         }
@@ -445,11 +453,14 @@ struct ClipboardCardView: View {
 
             Divider()
 
-            // Edit — only for text-type items
-            if case .text = item.content {
-                Button("Edit") {
-                    openEditWindow()
-                }
+            // Edit — text and link items
+            switch item.content {
+            case .text:
+                Button("Edit") { openEditWindow() }
+            case .link:
+                Button("Edit") { openLinkEditWindow() }
+            default:
+                EmptyView()
             }
 
             Button("Rename") {
@@ -459,13 +470,8 @@ struct ClipboardCardView: View {
 
             Divider()
 
-            // Pin submenu
-            Menu("Pin") {
-                if item.isPinned {
-                    Button("Unpin") { viewModel.setPinned(false, for: item) }
-                } else {
-                    Button("Pin to Top") { viewModel.setPinned(true, for: item) }
-                }
+            Button(item.isPinned ? "Unpin" : "Pin") {
+                viewModel.setPinned(!item.isPinned, for: item)
             }
 
             Button("Preview") {
@@ -535,6 +541,30 @@ struct ClipboardCardView: View {
         win.title = "Edit Item"
         win.styleMask = NSWindow.StyleMask([.titled, .closable])
         win.setContentSize(NSSize(width: 560, height: 380))
+        win.center()
+        win.isReleasedWhenClosed = false
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        editWindow = win
+    }
+
+    private func openLinkEditWindow() {
+        guard case .link(let c) = item.content else { return }
+        editWindow?.close()
+        let capturedItem = item
+        let view = EditLinkWindowView(urlString: c.url.absoluteString, title: c.title ?? "") { newURL, newTitle in
+            viewModel.updateItemLink(capturedItem, newURLString: newURL, newTitle: newTitle.isEmpty ? nil : newTitle)
+            editWindow?.close()
+            editWindow = nil
+        } onCancel: {
+            editWindow?.close()
+            editWindow = nil
+        }
+        let controller = NSHostingController(rootView: view)
+        let win = NSWindow(contentViewController: controller)
+        win.title = "Edit Link"
+        win.styleMask = NSWindow.StyleMask([.titled, .closable])
+        win.setContentSize(NSSize(width: 480, height: 200))
         win.center()
         win.isReleasedWhenClosed = false
         win.makeKeyAndOrderFront(nil)
@@ -658,6 +688,48 @@ private struct EditWindowView: View {
                 .padding(12)
         }
         .frame(width: 560, height: 380)
+    }
+}
+
+// MARK: - Edit Link Window View
+
+private struct EditLinkWindowView: View {
+    @State var urlString: String
+    @State var title: String
+    let onSave: (String, String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Edit Link").font(.headline)
+                Spacer()
+                Button("Cancel") { onCancel() }
+                    .buttonStyle(.bordered)
+                Button("Save") { onSave(urlString, title) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(urlString.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding()
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("URL").font(.caption).foregroundStyle(.secondary)
+                    TextField("https://example.com", text: $urlString)
+                        .textFieldStyle(.roundedBorder)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Title (optional)").font(.caption).foregroundStyle(.secondary)
+                    TextField("Page title", text: $title)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            .padding()
+        }
+        .frame(width: 480, height: 200)
     }
 }
 
@@ -906,13 +978,12 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             frame = sv.bounds
         }
 
-        /// Moves this view to the end of the superview's subview list,
-        /// making it the frontmost view in AppKit's hit-test traversal.
+        /// Repositions this view to be the frontmost sibling in AppKit's subview list.
+        /// `addSubview(_:positioned:relativeTo:)` reorders without remove/re-add,
+        /// so it does NOT re-trigger viewDidMoveToSuperview.
         func bringToFront() {
             guard let sv = superview, sv.subviews.last !== self else { return }
-            sv.sortSubviews({ v1, v2, _ in
-                v1 is CardDragView ? .orderedDescending : .orderedSame
-            }, context: nil)
+            sv.addSubview(self, positioned: .above, relativeTo: nil)
         }
 
         override func mouseDown(with event: NSEvent) {
@@ -958,6 +1029,14 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         override func hitTest(_ point: NSPoint) -> NSView? { self }
         override var acceptsFirstResponder: Bool { false }
+
+        // Forward right-click context menu to the SwiftUI hosting view.
+        // hitTest returns `self` for all points (needed for drag), so right-click
+        // events land here — but we have no menu. Delegate up to the superview
+        // which holds the SwiftUI .contextMenu attachment.
+        override func menu(for event: NSEvent) -> NSMenu? {
+            return superview?.menu(for: event)
+        }
 
         // MARK: Pasteboard Builder
 

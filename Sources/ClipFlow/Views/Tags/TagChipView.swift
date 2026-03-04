@@ -126,20 +126,13 @@ struct TagChipView: View {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.65), value: isDropTarget)
-        .onDrop(of: [UTType.clipboardItemID.identifier], isTargeted: $isDropTarget) { providers in
-            guard let provider = providers.first else { return false }
-
-            provider.loadDataRepresentation(forTypeIdentifier: UTType.clipboardItemID.identifier) { data, error in
-                guard error == nil,
-                      let data = data,
-                      let itemIdString = String(data: data, encoding: .utf8),
-                      let itemId = UUID(uuidString: itemIdString) else { return }
-
-                DispatchQueue.main.async {
-                    onDrop?(itemId)
-                }
-            }
-            return true
+        .overlay {
+            // AppKit NSDraggingDestination overlay — replaces SwiftUI .onDrop.
+            // SwiftUI .onDrop reads drag data via NSItemProvider.loadDataRepresentation
+            // (async), which can silently fail when the data was written synchronously
+            // by beginDraggingSession / NSPasteboardItem in AppKitCardDragOverlay.
+            // Reading NSDraggingInfo.draggingPasteboard directly (sync) is reliable.
+            TagDropOverlay(onDrop: onDrop, isDropTarget: $isDropTarget)
         }
         .help(tag.name)
         .onChange(of: tag.name) { _, newName in
@@ -207,6 +200,87 @@ struct TagChipView: View {
         NSLog("❌ RENAME: Cancelled rename for '\(tag.name)'")
         isRenaming = false
         editingName = ""
+    }
+}
+
+// MARK: - AppKit Drop Target
+
+/// Transparent NSViewRepresentable that implements NSDraggingDestination.
+///
+/// SwiftUI's .onDrop wraps AppKit drag events through NSItemProvider,
+/// which uses an async `loadDataRepresentation` call. When the data was
+/// written synchronously via NSPasteboardItem / beginDraggingSession
+/// (as AppKitCardDragOverlay does), the async bridge can silently drop
+/// the data. Reading NSDraggingInfo.draggingPasteboard directly — the
+/// same synchronous pasteboard AppKit populates during the session — is
+/// always reliable. hitTest returns nil so mouse events pass through to
+/// the SwiftUI button layer beneath.
+private struct TagDropOverlay: NSViewRepresentable {
+    let onDrop: ((UUID) -> Void)?
+    @Binding var isDropTarget: Bool
+
+    private static let dragType = NSPasteboard.PasteboardType(UTType.clipboardItemID.identifier)
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> TagDropView {
+        let v = TagDropView()
+        v.coordinator = context.coordinator
+        v.registerForDraggedTypes([Self.dragType])
+        return v
+    }
+
+    func updateNSView(_ v: TagDropView, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    final class Coordinator: NSObject {
+        var parent: TagDropOverlay
+        init(_ p: TagDropOverlay) { parent = p }
+    }
+
+    final class TagDropView: NSView {
+        var coordinator: Coordinator?
+        private static let dragType = NSPasteboard.PasteboardType(UTType.clipboardItemID.identifier)
+
+        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+            guard sender.draggingPasteboard.availableType(from: [Self.dragType]) != nil else { return [] }
+            DispatchQueue.main.async { self.coordinator?.parent.isDropTarget = true }
+            return .copy
+        }
+
+        override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
+
+        override func draggingExited(_ sender: NSDraggingInfo?) {
+            DispatchQueue.main.async { self.coordinator?.parent.isDropTarget = false }
+        }
+
+        override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { true }
+
+        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+            guard let data = sender.draggingPasteboard.data(forType: Self.dragType),
+                  let uuidString = String(data: data, encoding: .utf8),
+                  let itemId = UUID(uuidString: uuidString) else {
+                NSLog("❌ TagDrop: failed to read UUID from pasteboard")
+                DispatchQueue.main.async { self.coordinator?.parent.isDropTarget = false }
+                return false
+            }
+            NSLog("✅ TagDrop: assigning item \(itemId)")
+            DispatchQueue.main.async {
+                self.coordinator?.parent.isDropTarget = false
+                self.coordinator?.parent.onDrop?(itemId)
+            }
+            return true
+        }
+
+        override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+            DispatchQueue.main.async { self.coordinator?.parent.isDropTarget = false }
+        }
+
+        // Pass all mouse/keyboard events through to the SwiftUI layer beneath
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override var acceptsFirstResponder: Bool { false }
+        override var isOpaque: Bool { false }
     }
 }
 

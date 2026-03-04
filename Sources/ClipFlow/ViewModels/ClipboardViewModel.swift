@@ -413,6 +413,34 @@ class ClipboardViewModel {
         }
     }
 
+    /// Update the URL (and optionally title) of a link-type item.
+    func updateItemLink(_ item: ClipboardItem, newURLString: String, newTitle: String?) {
+        guard case .link(let old) = item.content,
+              let newURL = URL(string: newURLString.trimmingCharacters(in: .whitespaces)) else { return }
+        let newContent = ClipboardContent.link(
+            LinkContent(url: newURL, title: newTitle, description: old.description,
+                        faviconData: old.faviconData, previewImageData: old.previewImageData)
+        )
+        let updated = ClipboardItem(
+            id: item.id, content: newContent,
+            metadata: ItemMetadata.generate(for: newContent),
+            source: item.source, timestamps: item.timestamps,
+            security: item.security, collectionIds: item.collectionIds,
+            tagIds: item.tagIds, isFavorite: item.isFavorite,
+            isPinned: item.isPinned, isDeleted: item.isDeleted
+        )
+        Task {
+            do {
+                try await clipboardService.updateItemContent(updated)
+                if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                    items[idx] = updated
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     // MARK: - Pin / Unpin
 
     /// Optimistically set pin state with immediate local update.
