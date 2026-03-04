@@ -96,11 +96,6 @@ struct ClipboardCardView: View {
             // Double-click to paste and hide overlay
             pasteAndHideOverlay()
         }
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                copyItem()
-            }
-        )
         .contextMenu {
             cardContextMenu
         }
@@ -183,20 +178,37 @@ struct ClipboardCardView: View {
                     .padding(.vertical, 3)
                     .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
-                // Pin button — shown when pinned or when hovering the header.
-                // isHoveringHeader is driven by CardDragView's NSTrackingArea (not .onHover)
-                // because the AppKit overlay intercepts all hit-tests.
+                // Pin + Copy buttons — shown when pinned/hovered.
+                // isHoveringHeader comes from CardDragView NSTrackingArea (not .onHover).
                 if item.isPinned || isHoveringHeader {
-                    Button {
-                        viewModel.setPinned(!item.isPinned, for: item)
-                    } label: {
-                        Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(item.isPinned ? Color.white : .secondary)
-                            .rotationEffect(.degrees(item.isPinned ? 45 : 0))
+                    HStack(spacing: 6) {
+                        // Copy to clipboard icon
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) { showCopyFeedback = true }
+                            viewModel.copyToClipboard(item)
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(600))
+                                withAnimation(.easeInOut(duration: 0.15)) { showCopyFeedback = false }
+                            }
+                        } label: {
+                            Image(systemName: showCopyFeedback ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(showCopyFeedback ? .green : .secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        // Pin toggle icon
+                        Button {
+                            viewModel.setPinned(!item.isPinned, for: item)
+                        } label: {
+                            Image(systemName: item.isPinned ? "pin.fill" : "pin")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(item.isPinned ? Color.white : .secondary)
+                                .rotationEffect(.degrees(item.isPinned ? 45 : 0))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    .transition(.opacity.combined(with: .scale(scale: 0.7)))
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     .animation(.easeInOut(duration: 0.15), value: isHoveringHeader)
                 }
 
@@ -312,24 +324,6 @@ struct ClipboardCardView: View {
     }
 
     // MARK: - Action Methods
-
-    private func copyItem() {
-        // Show subtle copy feedback animation
-        withAnimation(.easeInOut(duration: 0.15)) {
-            showCopyFeedback = true
-        }
-
-        // Reset feedback after animation
-        Task {
-            try? await Task.sleep(for: .milliseconds(150))
-            withAnimation(.easeInOut(duration: 0.15)) {
-                showCopyFeedback = false
-            }
-        }
-
-        // Perform the paste
-        viewModel.pasteItem(item)
-    }
 
     private func pasteAndHideOverlay() {
         // CRITICAL: Hide overlay FIRST to restore focus to original text field

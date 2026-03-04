@@ -59,17 +59,24 @@ class ClipboardViewModel {
     }
 
     private func handleNewItem(_ item: ClipboardItem) {
-        // O(1) check: only scan the array if we know a duplicate exists
-        if itemIdSet.contains(item.id) || itemHashSet.contains(item.metadata.hash) {
-            items.removeAll { $0.id == item.id || $0.metadata.hash == item.metadata.hash }
-            // Sets are rebuilt below via rebuildSets; don't update incrementally here
+        if let idx = items.firstIndex(where: { $0.id == item.id }) {
+            // Known item (pin/unpin, edit, favorite, etc.) — update in-place so
+            // its position is preserved. filteredItems' sort will move it if needed.
+            items[idx] = item
+            itemHashSet.insert(item.metadata.hash)
+            return
         }
 
+        if itemHashSet.contains(item.metadata.hash) {
+            // Same content, different ID (re-paste of existing text) — replace and promote.
+            items.removeAll { $0.metadata.hash == item.metadata.hash }
+        }
+
+        // Genuinely new item — add at front.
         items.insert(item, at: 0)
         itemIdSet.insert(item.id)
         itemHashSet.insert(item.metadata.hash)
 
-        // Limit to reasonable number for performance
         if items.count > 1000 {
             let removed = items.removeLast()
             itemIdSet.remove(removed.id)
