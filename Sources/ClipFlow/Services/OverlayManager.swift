@@ -73,10 +73,7 @@ class OverlayManager: ObservableObject {
         NSLog("🎬 Starting show animation")
 
         window.showOverlay()
-        // NSPanel with .nonactivatingPanel: makeKeyAndOrderFront makes the panel key
-        // (required for NSGlassEffectView live compositing) WITHOUT activating ClipFlow
-        // or stealing focus from the user's current app/text field.
-        window.makeKeyAndOrderFront(nil)
+        window.orderFront(nil)
 
         isVisible = true
 
@@ -144,7 +141,20 @@ class OverlayManager: ObservableObject {
         // The glass view ties its geometry to contentView via Auto Layout automatically.
         let glassView = NSGlassEffectView()
         glassView.cornerRadius = 32
-        glassView.contentView = NSHostingView(rootView: swiftUIContent)
+        // Clip the CALayer to the rounded rect so the 4 corner areas are truly
+        // transparent. Without this, the window shadow is computed from the full
+        // rectangular frame, producing visible square artifacts at every corner.
+        glassView.wantsLayer = true
+        glassView.layer?.cornerRadius = 32
+        glassView.layer?.masksToBounds = true
+
+        // NSHostingView must be layer-backed with a clear background.
+        // Without this, the default opaque backing covers the glass entirely,
+        // producing a dark rectangle instead of transparent glass.
+        let hostingView = NSHostingView(rootView: swiftUIContent)
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        glassView.contentView = hostingView
 
         overlayWindow?.contentView = glassView
     }

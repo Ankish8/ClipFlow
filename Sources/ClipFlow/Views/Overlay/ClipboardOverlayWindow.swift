@@ -135,7 +135,7 @@ class ClipboardOverlayWindow: NSPanel {
         orderFront(nil)
 
         // Animate sliding up from bottom with subtle spring animation
-        NSAnimationContext.runAnimationGroup { context in
+        NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.2
             // Subtle spring animation - reduced bounce
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 1.1, 0.3, 0.9)
@@ -143,7 +143,11 @@ class ClipboardOverlayWindow: NSPanel {
 
             // Slide up to final position
             animator().setFrame(finalFrame, display: true)
-        }
+        }, completionHandler: {
+            // Recalculate shadow after animation settles so it follows the rounded
+            // glass corners rather than the rectangular window frame.
+            self.invalidateShadow()
+        })
     }
 
     func hideOverlay() {
