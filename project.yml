@@ -1,0 +1,79 @@
+name: ClipFlow
+
+options:
+  bundleIdPrefix: com.clipflow
+  deploymentTarget:
+    macOS: "26.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: "6.0.0"
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts.git
+    from: "2.0.0"
+
+targets:
+
+  ClipFlowCore:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/ClipFlowCore
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SKIP_INSTALL: YES
+
+  ClipFlowAPI:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/ClipFlowAPI
+    dependencies:
+      - target: ClipFlowCore
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SKIP_INSTALL: YES
+
+  ClipFlowBackend:
+    type: framework
+    platform: macOS
+    sources:
+      - Sources/ClipFlowBackend
+    dependencies:
+      - target: ClipFlowCore
+      - target: ClipFlowAPI
+      - package: GRDB
+        product: GRDB
+      - package: KeyboardShortcuts
+        product: KeyboardShortcuts
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        SKIP_INSTALL: YES
+
+  ClipFlow:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/ClipFlow
+    dependencies:
+      - target: ClipFlowBackend
+      - target: ClipFlowCore
+      - target: ClipFlowAPI
+      - package: KeyboardShortcuts
+        product: KeyboardShortcuts
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        PRODUCT_BUNDLE_IDENTIFIER: com.clipflow.ClipFlow
+        INFOPLIST_FILE: Sources/ClipFlow/Info.plist
+        ENABLE_DEBUG_DYLIB: YES
+        OTHER_SWIFT_FLAGS: "$(inherited) -parse-as-library"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DISABLE_SENDABLE_CHECKING"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"

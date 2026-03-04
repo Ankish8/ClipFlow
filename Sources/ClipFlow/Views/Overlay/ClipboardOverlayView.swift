@@ -40,14 +40,10 @@ struct ClipboardOverlayView: View {
     }
 
     var body: some View {
-        // TimelineView keeps SwiftUI's render pipeline ticking every display frame on macOS 26,
+        // TimelineView keeps SwiftUI's render pipeline ticking every display frame,
         // which forces .glassEffect to re-sample behind-window content continuously
         // (fixes the "glass gets stuck when scrolling" issue).
-        if #available(macOS 26, *) {
-            TimelineView(.animation) { _ in
-                overlayContent
-            }
-        } else {
+        TimelineView(.animation) { _ in
             overlayContent
         }
     }
@@ -74,6 +70,13 @@ struct ClipboardOverlayView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .frame(height: 252)
+                .mask {
+                    HStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 32)
+                    }
+                }
                 .onChange(of: selectedIndex) { newIndex in
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newIndex, anchor: .center)
@@ -84,9 +87,7 @@ struct ClipboardOverlayView: View {
             Spacer().frame(height: 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-            if #available(macOS 26, *) { Color.clear } else { overlayBackground }
-        }
+        .background { Color.clear }
         .overlayPanel(cornerRadius: 32)
         .onAppear {
             updateFilteredItems()
@@ -116,20 +117,10 @@ struct ClipboardOverlayView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private var overlayBackground: some View {
-        VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)
-            .ignoresSafeArea()
-    }
+    // MARK: - Card Stack (wrapped in GlassEffectContainer)
 
-    // MARK: - Card Stack (extracted for GlassEffectContainer wrapping)
-
-    @ViewBuilder
     private var cardStack: some View {
-        if #available(macOS 26, *) {
-            GlassEffectContainer(spacing: 16) {
-                cardStackContent
-            }
-        } else {
+        GlassEffectContainer(spacing: 16) {
             cardStackContent
         }
     }
@@ -164,7 +155,8 @@ struct ClipboardOverlayView: View {
     private func selectAndPaste(_ item: ClipboardItem, index: Int) {
         selectedIndex = index
         viewModel.pasteItem(item)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(100))
             NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         }
     }
@@ -208,27 +200,34 @@ struct ClipboardOverlayView: View {
     }
 }
 
-// Visual effect view for blur
-struct VisualEffectView: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        // Mask the blur layer itself so it respects rounded corners
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 32
-        view.layer?.masksToBounds = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-    }
+#Preview("Overlay – With Items") {
+    let vm = ClipboardViewModel()
+    let items: [ClipboardItem] = [
+        ClipboardItem(
+            content: .text(TextContent(plainText: "Hello, World! This is a sample clipboard entry.")),
+            metadata: ItemMetadata(size: 48, hash: "a1"),
+            source: ItemSource(applicationName: "Xcode")
+        ),
+        ClipboardItem(
+            content: .text(TextContent(plainText: "func buildApp() -> some View { ContentView() }")),
+            metadata: ItemMetadata(size: 46, hash: "b2"),
+            source: ItemSource(applicationName: "Xcode")
+        ),
+        ClipboardItem(
+            content: .link(LinkContent(url: URL(string: "https://developer.apple.com")!, title: "Apple Developer")),
+            metadata: ItemMetadata(size: 30, hash: "c3"),
+            source: ItemSource(applicationName: "Safari")
+        ),
+        ClipboardItem(
+            content: .color(ColorContent(red: 0.2, green: 0.6, blue: 1.0)),
+            metadata: ItemMetadata(size: 7, hash: "d4"),
+            source: ItemSource(applicationName: "Figma")
+        ),
+    ]
+    vm.items = items
+    return ClipboardOverlayView(viewModel: vm)
+        .frame(width: 780, height: 340)
+        .background(Color.gray.opacity(0.2))
 }
 
 // Notification names

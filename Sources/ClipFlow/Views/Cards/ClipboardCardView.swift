@@ -51,6 +51,7 @@ struct ClipboardCardView: View {
         .frame(width: cardWidth, height: 250)
         .background { cardBackground }
         .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 6)
         .overlay(
             RoundedRectangle(cornerRadius: 20)
                 .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
@@ -257,10 +258,10 @@ struct ClipboardCardView: View {
 
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 20)
-            .fill(.thinMaterial)
+            .fill(.regularMaterial)
             .overlay(
                 RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
             )
     }
 
@@ -360,7 +361,7 @@ struct ClipboardCardView: View {
             let count = content.plainTextFallback.count
             return count == 1 ? "1 character" : "\(count) characters"
         case .image(let content):
-            return "\(Int(content.dimensions.width)) × \(Int(content.dimensions.height))"
+            return "\(content.format.rawValue.uppercased()) · \(Int(content.dimensions.width)) × \(Int(content.dimensions.height))"
         case .file(let content):
             return formatFileSize(content.fileSize)
         case .link:
@@ -410,7 +411,8 @@ struct ClipboardCardView: View {
         }
 
         // Reset feedback after animation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))
             withAnimation(.easeInOut(duration: 0.15)) {
                 showCopyFeedback = false
             }
@@ -424,12 +426,13 @@ struct ClipboardCardView: View {
         // CRITICAL: Hide overlay FIRST to restore focus to original text field
         NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
 
-        // Increased delay to 250ms to ensure:
+        // Delay 250ms to ensure:
         // 1. Overlay hide animation completes (200ms)
         // 2. Focus restored to previous app/text field via NSWorkspace
         // 3. macOS processes focus change
         // 4. THEN paste into the now-focused text field
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+        Task {
+            try? await Task.sleep(for: .milliseconds(250))
             NSLog("📋 Double-click paste executing after overlay hidden and focus restored")
 
             // Add haptic feedback
@@ -613,6 +616,32 @@ struct ClipboardCardView: View {
             itemTags.append(tag)
         }
     }
+}
+
+#Preview("Card – Text") {
+    let item = ClipboardItem(
+        content: .text(TextContent(plainText: "func greet(_ name: String) -> String {\n    return \"Hello, \\(name)!\"\n}")),
+        metadata: ItemMetadata.generate(for: .text(TextContent(plainText: "func greet..."))),
+        source: ItemSource(applicationName: "Xcode")
+    )
+    let vm = ClipboardViewModel()
+    return ClipboardCardView(item: item, index: 1, isSelected: true, viewModel: vm)
+        .padding()
+        .background(Color.gray.opacity(0.15))
+}
+
+#Preview("Card – Link") {
+    let url = URL(string: "https://developer.apple.com/documentation/swiftui")!
+    let linkContent = LinkContent(url: url, title: "SwiftUI Documentation")
+    let item = ClipboardItem(
+        content: .link(linkContent),
+        metadata: ItemMetadata.generate(for: .link(linkContent)),
+        source: ItemSource(applicationName: "Safari")
+    )
+    let vm = ClipboardViewModel()
+    return ClipboardCardView(item: item, index: 2, isSelected: false, viewModel: vm)
+        .padding()
+        .background(Color.gray.opacity(0.15))
 }
 
 // Content type information for styling

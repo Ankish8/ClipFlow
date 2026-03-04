@@ -1,10 +1,10 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "ClipFlow",
     platforms: [
-        .macOS(.v15)
+        .macOS(.v26)
     ],
     products: [
         .executable(
@@ -35,7 +35,6 @@ let package = Package(
             ],
             path: "Sources/ClipFlow",
             swiftSettings: [
-                .unsafeFlags(["-Xfrontend", "-disable-availability-checking"]),
                 .unsafeFlags(["-parse-as-library"]),
                 .define("DISABLE_SENDABLE_CHECKING")
             ]

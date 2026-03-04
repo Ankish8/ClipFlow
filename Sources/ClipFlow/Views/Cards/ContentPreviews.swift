@@ -115,47 +115,49 @@ struct ImagePreviewCard: View {
     @State private var renderedImage: Image? = nil
 
     var body: some View {
-        VStack(spacing: 6) {
-            Group {
-                if let img = renderedImage {
-                    img
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                } else {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.secondary.opacity(0.2))
-                        .frame(height: 180)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .foregroundStyle(.secondary)
-                                .font(.system(size: 24))
-                        )
-                }
-            }
-
-            Spacer(minLength: 4)
-
-            // Image info - compact layout
-            VStack(spacing: 3) {
-                Text("\(content.format.rawValue.uppercased())")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.primary)
-
-                Text("\(Int(content.dimensions.width)) × \(Int(content.dimensions.height))")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+        Group {
+            if let img = renderedImage {
+                // Use image as .background so SwiftUI always clips it to the
+                // placeholder's bounds — avoids scaledToFill overflowing into
+                // sibling views (header/footer) in the parent VStack.
+                Color.clear
+                    .background(
+                        img
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFill()
+                    )
+                    .overlay(Color.white.opacity(0.06))
+            } else {
+                Color.secondary.opacity(0.15)
+                    .overlay(
+                        Image(systemName: "photo")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 24))
+                    )
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             let data = content.data
-            let nsImage = await Task.detached(priority: .utility) {
-                NSImage(data: data)
+            let pair: (CGImage, CGFloat)? = await Task.detached(priority: .utility) {
+                guard let nsImage = NSImage(data: data) else { return nil }
+                // Detect actual pixel:point ratio from the bitmap representation.
+                // 72 DPI PNG → scale 1.0; 144 DPI Retina screenshot → scale 2.0.
+                let scale: CGFloat
+                if let rep = nsImage.representations.first as? NSBitmapImageRep, rep.size.width > 0 {
+                    scale = max(1.0, CGFloat(rep.pixelsWide) / rep.size.width)
+                } else {
+                    scale = 1.0
+                }
+                guard let cg = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+                return (cg, scale)
             }.value
-            if let nsImage {
-                renderedImage = Image(nsImage: nsImage)
+            if let (cg, scale) = pair {
+                renderedImage = Image(cg, scale: scale, label: Text(""))
             }
         }
     }
