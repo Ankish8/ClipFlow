@@ -968,8 +968,10 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         let v = CardDragView()
         v.coordinator = context.coordinator
         v.onHeaderHoverChanged = { hovering in
-            // Dispatch to avoid SwiftUI state mutation during view update
-            DispatchQueue.main.async { context.coordinator.parent.isHoveringHeader = hovering }
+            // mouseMoved is already on the main thread — update binding synchronously.
+            // No DispatchQueue.main.async: that would queue one task per mouse frame
+            // (~60/s) and delay all subsequent button click events.
+            context.coordinator.parent.isHoveringHeader = hovering
         }
         v.autoresizingMask = [.width, .height]
         return v
@@ -978,7 +980,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
     func updateNSView(_ v: CardDragView, context: Context) {
         context.coordinator.parent = self
         v.onHeaderHoverChanged = { hovering in
-            DispatchQueue.main.async { context.coordinator.parent.isHoveringHeader = hovering }
+            context.coordinator.parent.isHoveringHeader = hovering
         }
         // Guarantee drag view is the frontmost sibling in AppKit's hit-test order.
         // glassEffect may insert NSGlassEffectView siblings after our view is created,
@@ -1010,10 +1012,13 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         // Approximate header height in points (top padding + badge row + bottom padding + divider)
         private let headerPt: CGFloat = 52
+        // Deduplicate: only fire the callback when the state *actually* changes.
+        // mouseMoved fires at ~60 Hz; without this guard every frame queues a
+        // SwiftUI re-render, flooding the main queue and delaying button clicks.
+        private var lastHoverInHeader = false
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
-            // Remove old tracking areas and reinstall after bounds change
             for ta in trackingAreas { removeTrackingArea(ta) }
             addTrackingArea(NSTrackingArea(
                 rect: bounds,
@@ -1023,14 +1028,19 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         override func mouseMoved(with event: NSEvent) {
             let p = convert(event.locationInWindow, from: nil)
-            // In unflipped NSView coords, origin is bottom-left.
-            // Header is visually at the TOP, so y ≥ bounds.height - headerPt.
-            onHeaderHoverChanged?(p.y >= bounds.height - headerPt)
+            let inHeader = p.y >= bounds.height - headerPt
+            if inHeader != lastHoverInHeader {
+                lastHoverInHeader = inHeader
+                onHeaderHoverChanged?(inHeader)
+            }
             super.mouseMoved(with: event)
         }
 
         override func mouseExited(with event: NSEvent) {
-            onHeaderHoverChanged?(false)
+            if lastHoverInHeader {
+                lastHoverInHeader = false
+                onHeaderHoverChanged?(false)
+            }
             super.mouseExited(with: event)
         }
 
