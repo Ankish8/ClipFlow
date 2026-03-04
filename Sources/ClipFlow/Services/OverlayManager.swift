@@ -136,27 +136,8 @@ class OverlayManager: ObservableObject {
         let swiftUIContent = ClipboardOverlayView(viewModel: sharedViewModel)
         overlayWindow?.setOverlayView(swiftUIContent)
 
-        // NSGlassEffectView — Apple's native Liquid Glass (macOS 26+).
-        // Per WWDC25 session 310: set contentView, not addSubview.
-        // The glass view ties its geometry to contentView via Auto Layout automatically.
-        let glassView = NSGlassEffectView()
-        glassView.cornerRadius = 32
-        // Clip the CALayer to the rounded rect so the 4 corner areas are truly
-        // transparent. Without this, the window shadow is computed from the full
-        // rectangular frame, producing visible square artifacts at every corner.
-        glassView.wantsLayer = true
-        glassView.layer?.cornerRadius = 32
-        glassView.layer?.masksToBounds = true
-
-        // NSHostingView must be layer-backed with a clear background.
-        // Without this, the default opaque backing covers the glass entirely,
-        // producing a dark rectangle instead of transparent glass.
-        let hostingView = NSHostingView(rootView: swiftUIContent)
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        glassView.contentView = hostingView
-
-        overlayWindow?.contentView = glassView
+        let hostingView = BorderlessHostingView(rootView: swiftUIContent)
+        overlayWindow?.contentView = hostingView
     }
 
     func cleanup() {

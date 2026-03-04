@@ -1,6 +1,45 @@
 import SwiftUI
 import AppKit
 
+/// NSHostingView subclass that strips all border/focus-ring drawing.
+/// The default NSHostingView can render a 1px border around the window
+/// content area, which is visible against Liquid Glass panels.
+final class BorderlessHostingView<Content: View>: NSHostingView<Content> {
+    override var focusRingType: NSFocusRingType {
+        get { .none }
+        set {}
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Strip any layer border that AppKit may apply
+        wantsLayer = true
+        layer?.borderWidth = 0
+        layer?.borderColor = nil
+
+        // Recursively strip borders from all subviews
+        stripBorders(from: self)
+    }
+
+    override func layout() {
+        super.layout()
+        // Re-strip after layout since SwiftUI may recreate subviews
+        layer?.borderWidth = 0
+        layer?.borderColor = nil
+    }
+
+    private func stripBorders(from view: NSView) {
+        view.focusRingType = .none
+        if let layer = view.layer {
+            layer.borderWidth = 0
+            layer.borderColor = nil
+        }
+        for subview in view.subviews {
+            stripBorders(from: subview)
+        }
+    }
+}
+
 class ClipboardOverlayWindow: NSPanel {
     private var initialFrame: NSRect = .zero
     private var finalFrame: NSRect = .zero
@@ -27,10 +66,15 @@ class ClipboardOverlayWindow: NSPanel {
         // Window properties
         isOpaque = false
         backgroundColor = NSColor.clear
-        hasShadow = true
+        hasShadow = false
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isMovableByWindowBackground = false
+        autorecalculatesKeyViewLoop = false
+
+        // Prevent any window-level border drawing around the content
+        setContentBorderThickness(0, for: .minY)
+        setContentBorderThickness(0, for: .maxY)
 
         // Setup frames for animation
         setupFrames()
@@ -132,7 +176,7 @@ class ClipboardOverlayWindow: NSPanel {
         // Start from hidden position
         setFrame(initialFrame, display: false)
         alphaValue = 1.0
-        orderFront(nil)
+        makeKeyAndOrderFront(nil)
 
         // Animate sliding up from bottom with subtle spring animation
         NSAnimationContext.runAnimationGroup({ context in
@@ -178,14 +222,15 @@ class ClipboardOverlayWindow: NSPanel {
         // We use weak self in the closures to prevent retain cycles
     }
 
-    // Allow window to become key so clicks work on first tap
-    override var canBecomeKey: Bool {
-        return true
-    }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 
-    // Prevent window from becoming main to avoid focus rings on buttons
-    override var canBecomeMain: Bool {
-        return false
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        // Suppress focus ring on any view that becomes first responder
+        if let view = responder as? NSView {
+            view.focusRingType = .none
+        }
+        return super.makeFirstResponder(responder)
     }
 
     override func keyDown(with event: NSEvent) {

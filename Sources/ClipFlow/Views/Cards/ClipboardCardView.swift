@@ -50,13 +50,11 @@ struct ClipboardCardView: View {
             cardFooter
         }
         .frame(width: cardWidth, height: 250)
-        .background { cardBackground }
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 6)
-        .overlay(
+        .background {
             RoundedRectangle(cornerRadius: 20)
-                .stroke(isSelected ? Color.primary.opacity(0.12) : Color.clear, lineWidth: 1)
-        )
+                .fill(.ultraThinMaterial)
+        }
+        .glassCard(isSelected: isSelected, cornerRadius: 20)
         .scaleEffect(showCopyFeedback ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.15), value: showCopyFeedback)
         .animation(.easeInOut(duration: 0.2), value: isSelected)
@@ -274,14 +272,7 @@ struct ClipboardCardView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 20)
-            .fill(isSelected ? Color.customAccent.opacity(0.14) : Color.primary.opacity(0.07))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
-            )
-    }
+
 
     private var cardHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -289,12 +280,12 @@ struct ClipboardCardView: View {
                 // Subtle content type badge
                 Text(contentTypeInfo.name.uppercased())
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.white.opacity(0.12))
+                            .fill(Color.primary.opacity(0.08))
                     )
 
                 Spacer()

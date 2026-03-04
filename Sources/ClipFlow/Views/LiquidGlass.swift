@@ -31,10 +31,9 @@ extension View {
         self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
     }
 
-    /// Clips content to the overlay panel's rounded rect shape.
-    /// Live Liquid Glass compositing is handled by NSGlassEffectView at the window level;
-    /// applying glassEffect here would create a second compositor on top of it.
+    /// Full-surface Liquid Glass panel.
+    /// Drives live compositing via SwiftUI's Metal render pass — no key-window required.
     func overlayPanel(cornerRadius: CGFloat = 32) -> some View {
-        self.clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
     }
 }

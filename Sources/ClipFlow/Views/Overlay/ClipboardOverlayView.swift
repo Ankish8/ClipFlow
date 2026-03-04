@@ -43,7 +43,12 @@ struct ClipboardOverlayView: View {
     }
 
     var body: some View {
-        overlayContent
+        // TimelineView(.animation) fires a new render context every display frame (~60fps).
+        // SwiftUI's .glassEffect() reads the backdrop during each render pass, so this
+        // keeps the Liquid Glass live-compositing without needing key-window status.
+        TimelineView(.animation) { _ in
+            overlayContent
+        }
     }
 
     @ViewBuilder
@@ -97,6 +102,7 @@ struct ClipboardOverlayView: View {
             updateFilteredItems()
         }
         .focusable()
+        .focusEffectDisabled()
         .onKeyPress { press in
             // Auto-expand search when user starts typing
             if !isSearchExpanded && press.characters.count == 1 && !press.characters.isEmpty {
