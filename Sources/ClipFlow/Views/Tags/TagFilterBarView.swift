@@ -28,7 +28,7 @@ struct TagFilterBarView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             chipRow
         }
-        .frame(height: 40)
+        .frame(height: 46)
         .scrollClipDisabled()
         .background(Color.clear)
         .onAppear {
@@ -128,8 +128,8 @@ struct TagFilterBarView: View {
                 Text("Clipboard History")
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
         }
         .buttonStyle(.toolbarChip(isSelected: isSelected, tint: .accentColor))
     }

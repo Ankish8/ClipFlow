@@ -345,6 +345,18 @@ public class ClipboardService: ClipboardServiceAPI {
         }
     }
 
+    /// Explicitly set pin state — avoids toggle race when cache is stale.
+    public func setItemPinned(itemId: UUID, pinned: Bool) async throws {
+        try await performanceMonitor.measure(operation: "set_pinned") {
+            guard var item = try await storageService.getItem(id: itemId) else {
+                throw ClipboardError.invalidInput("Item not found")
+            }
+            item.isPinned = pinned
+            try await storageService.updateItem(item)
+            _itemUpdates.send(item)
+        }
+    }
+
 
     public func toggleFavorite(itemId: UUID) async throws {
         try await performanceMonitor.measure(operation: "toggle_favorite") {

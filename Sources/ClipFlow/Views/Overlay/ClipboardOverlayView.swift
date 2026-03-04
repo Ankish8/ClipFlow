@@ -9,6 +9,10 @@ struct ClipboardOverlayView: View {
     // Search state
     @State private var searchText = ""
 
+    // PERFORMANCE: Pre-sorted base (pinned first, then recency-order).
+    // Rebuilt only when viewModel.items changes — NOT on every tag/search change.
+    @State private var sortedBaseItems: [ClipboardItem] = []
+
     // PERFORMANCE: Cache filtered items instead of recomputing on every render
     @State private var filteredItems: [ClipboardItem] = []
     // PERFORMANCE: Avoid Array(enumerated()) allocation on every render
@@ -29,9 +33,16 @@ struct ClipboardOverlayView: View {
         self.viewModel = viewModel
     }
 
-    // PERFORMANCE: Compute filtered items once and cache the result
+    // PERFORMANCE: Sort once when items change (O(n log n)), not on every tag switch.
+    // viewModel.items are newest-first; pinned items float to front.
+    private func rebuildSortedBase() {
+        sortedBaseItems = viewModel.items.sorted { $0.isPinned && !$1.isPinned }
+    }
+
+    // PERFORMANCE: Filter from pre-sorted base — O(n) only, no sort cost.
+    // Called on every tag/search change; sorting is handled by rebuildSortedBase().
     private func updateFilteredItems() {
-        var items = viewModel.items
+        var items = sortedBaseItems
 
         // Apply tag filtering — isDisjoint avoids allocating an intersection Set
         if !selectedTagIds.isEmpty {
@@ -47,9 +58,6 @@ struct ClipboardOverlayView: View {
                     || (item.source.applicationName?.localizedCaseInsensitiveContains(query) ?? false)
             }
         }
-
-        // Pinned items float to the front, then sort by recency (items are already newest-first)
-        items.sort { $0.isPinned && !$1.isPinned }
 
         filteredItems = items
         enumeratedFilteredItems = Array(items.enumerated())
@@ -104,13 +112,16 @@ struct ClipboardOverlayView: View {
         .background { Color.clear }
         .overlayPanel(cornerRadius: 32)
         .onAppear {
+            rebuildSortedBase()
             updateFilteredItems()
         }
         .onChange(of: selectedTagIds) {
-            // Tag changes are instant (no debounce needed)
+            // Tag changes are instant — filter from already-sorted base
             updateFilteredItems()
         }
         .onChange(of: viewModel.items) {
+            // Items changed — re-sort once, then re-filter
+            rebuildSortedBase()
             updateFilteredItems()
         }
         .onChange(of: searchText) {

@@ -55,7 +55,7 @@ struct TagChipView: View {
                 // Tag color indicator - clickable to open color picker
                 Circle()
                     .fill(tagColor)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 10, height: 10)
                     .onTapGesture {
                         openColorPicker()
                     }
@@ -106,10 +106,26 @@ struct TagChipView: View {
                         )
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
         }
         .buttonStyle(.toolbarChip(isSelected: isSelected || isDropTarget, tint: tagColor))
+        // Drop target: scale up + colored ring so the user clearly sees the assignment target
+        .scaleEffect(isDropTarget ? 1.1 : 1.0)
+        .overlay {
+            if isDropTarget {
+                Capsule()
+                    .stroke(tagColor, lineWidth: 2)
+                    .overlay(alignment: .topTrailing) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(tagColor)
+                            .background(Circle().fill(.background))
+                            .offset(x: 6, y: -6)
+                    }
+            }
+        }
+        .animation(.spring(response: 0.2, dampingFraction: 0.65), value: isDropTarget)
         .onDrop(of: [UTType.clipboardItemID.identifier], isTargeted: $isDropTarget) { providers in
             guard let provider = providers.first else { return false }
 

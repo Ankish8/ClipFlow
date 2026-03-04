@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ClipFlowCore
 import ClipFlowBackend
 import UniformTypeIdentifiers
@@ -15,11 +16,10 @@ struct ClipboardCardView: View {
     @State private var showCopyFeedback = false
     @State private var showTagMenu = false
     @State private var showNewTagCreator = false
-    @State private var showEditSheet = false
-    @State private var showPreviewSheet = false
     @State private var showRenameSheet = false
-    @State private var editText = ""
     @State private var renameText = ""
+    @State private var editWindow: NSWindow? = nil
+    @State private var previewWindow: NSWindow? = nil
     @State private var tagTintColor: Color = .clear
 
     // PERFORMANCE: Cache computed tags instead of filtering on every render
@@ -100,12 +100,6 @@ struct ClipboardCardView: View {
         .contextMenu {
             cardContextMenu
         }
-        .sheet(isPresented: $showEditSheet) {
-            editSheet
-        }
-        .sheet(isPresented: $showPreviewSheet) {
-            previewSheet
-        }
         .sheet(isPresented: $showRenameSheet) {
             renameSheet
         }
@@ -172,14 +166,17 @@ struct ClipboardCardView: View {
     
 
     private var cardHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
-                // Content type badge
-                Text(contentTypeInfo.name.uppercased())
-                    .font(.system(size: 11, weight: .medium))
+                // Badge shows custom name when set, otherwise content type
+                let badgeLabel = viewModel.customName(for: item.id)?.uppercased()
+                    ?? contentTypeInfo.name.uppercased()
+                Text(badgeLabel)
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
                     .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
 
                 // Pin indicator
@@ -190,23 +187,18 @@ struct ClipboardCardView: View {
                         .rotationEffect(.degrees(45))
                 }
 
-                // Custom name label
-                if let name = viewModel.customName(for: item.id) {
-                    Text(name)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
                 Spacer()
 
                 // Source app icon badge
                 appIconBadge
             }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+
+            Divider()
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
+        .background(Color.primary.opacity(0.04))
     }
 
     private var contentPreview: some View {
@@ -381,7 +373,7 @@ struct ClipboardCardView: View {
                     .interpolation(.high)
                     .antialiased(true)
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 36, height: 36)
                     .clipShape(Circle())
                     .overlay(
                         Circle()
@@ -456,13 +448,7 @@ struct ClipboardCardView: View {
             // Edit — only for text-type items
             if case .text = item.content {
                 Button("Edit") {
-                    if case .text(let c) = item.content { editText = c.plainText }
-                    showEditSheet = true
-                }
-
-                Button("Writing Tools") {
-                    if case .text(let c) = item.content { editText = c.plainText }
-                    showEditSheet = true  // Edit sheet has WritingTools enabled
+                    openEditWindow()
                 }
             }
 
@@ -483,7 +469,7 @@ struct ClipboardCardView: View {
             }
 
             Button("Preview") {
-                showPreviewSheet = true
+                openPreviewWindow()
             }
 
             Button("Share...") {
@@ -530,50 +516,51 @@ struct ClipboardCardView: View {
         }
     }
 
-    // MARK: - Edit Sheet
+    // MARK: - Centered Windows (Edit / Preview)
 
-    private var editSheet: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Edit Item")
-                    .font(.headline)
-                Spacer()
-                Button("Done") {
-                    viewModel.updateItemText(item, newText: editText)
-                    showEditSheet = false
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .padding()
-
-            Divider()
-
-            TextEditor(text: $editText)
-                .font(.system(size: 13))
-                .writingToolsBehavior(.automatic)
-                .padding(12)
+    private func openEditWindow() {
+        guard case .text(let c) = item.content else { return }
+        editWindow?.close()
+        let capturedItem = item
+        let view = EditWindowView(text: c.plainText) { savedText in
+            viewModel.updateItemText(capturedItem, newText: savedText)
+            editWindow?.close()
+            editWindow = nil
+        } onCancel: {
+            editWindow?.close()
+            editWindow = nil
         }
-        .frame(width: 560, height: 360)
+        let controller = NSHostingController(rootView: view)
+        let win = NSWindow(contentViewController: controller)
+        win.title = "Edit Item"
+        win.styleMask = NSWindow.StyleMask([.titled, .closable])
+        win.setContentSize(NSSize(width: 560, height: 380))
+        win.center()
+        win.isReleasedWhenClosed = false
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        editWindow = win
     }
 
-    // MARK: - Preview Sheet
-
-    private var previewSheet: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(viewModel.customName(for: item.id) ?? item.content.typeDisplayName)
-                    .font(.headline)
-                Spacer()
-                Button("Done") { showPreviewSheet = false }
-                    .buttonStyle(.bordered)
-            }
-            .padding()
-
-            Divider()
-
-            DetailView(item: item, viewModel: viewModel)
+    private func openPreviewWindow() {
+        previewWindow?.close()
+        let capturedItem = item
+        let capturedVM = viewModel
+        let title = viewModel.customName(for: item.id) ?? contentTypeInfo.name
+        let view = PreviewWindowView(item: capturedItem, viewModel: capturedVM) {
+            previewWindow?.close()
+            previewWindow = nil
         }
-        .frame(width: 600, height: 500)
+        let controller = NSHostingController(rootView: view)
+        let win = NSWindow(contentViewController: controller)
+        win.title = title
+        win.styleMask = NSWindow.StyleMask([.titled, .closable, .resizable])
+        win.setContentSize(NSSize(width: 620, height: 520))
+        win.center()
+        win.isReleasedWhenClosed = false
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        previewWindow = win
     }
 
     // MARK: - Rename Sheet
@@ -641,6 +628,62 @@ struct ClipboardCardView: View {
             viewModel.addTagToItem(tagId: tag.id, itemId: item.id)
             itemTags.append(tag)
         }
+    }
+}
+
+// MARK: - Edit Window View
+
+private struct EditWindowView: View {
+    @State var text: String
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Edit Item").font(.headline)
+                Spacer()
+                Button("Cancel") { onCancel() }
+                    .buttonStyle(.bordered)
+                Button("Save") { onSave(text) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
+            }
+            .padding()
+
+            Divider()
+
+            TextEditor(text: $text)
+                .font(.system(size: 13))
+                .padding(12)
+        }
+        .frame(width: 560, height: 380)
+    }
+}
+
+// MARK: - Preview Window View
+
+private struct PreviewWindowView: View {
+    let item: ClipboardItem
+    let viewModel: ClipboardViewModel
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(viewModel.customName(for: item.id) ?? item.content.typeDisplayName)
+                    .font(.headline)
+                Spacer()
+                Button("Done") { onClose() }
+                    .buttonStyle(.bordered)
+            }
+            .padding()
+
+            Divider()
+
+            DetailView(item: item, viewModel: viewModel)
+        }
+        .frame(width: 620, height: 520)
     }
 }
 
@@ -820,6 +863,10 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
     func updateNSView(_ v: CardDragView, context: Context) {
         context.coordinator.parent = self
+        // Guarantee drag view is the frontmost sibling in AppKit's hit-test order.
+        // glassEffect may insert NSGlassEffectView siblings after our view is created,
+        // shadowing it for certain content regions (notably decoded image areas).
+        v.bringToFront()
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: CardDragView, context: Context) -> CGSize? {
@@ -845,10 +892,27 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         override func viewDidMoveToSuperview() {
             super.viewDidMoveToSuperview()
-            if let sv = superview {
-                frame = sv.bounds
-            }
+            guard let sv = superview else { return }
+            frame = sv.bounds
             autoresizingMask = [.width, .height]
+            // Move to front so we win AppKit hit-test against any glass effect siblings
+            bringToFront()
+        }
+
+        override func layout() {
+            super.layout()
+            // Keep frame in sync after any SwiftUI layout pass that resizes our container
+            guard let sv = superview, frame != sv.bounds else { return }
+            frame = sv.bounds
+        }
+
+        /// Moves this view to the end of the superview's subview list,
+        /// making it the frontmost view in AppKit's hit-test traversal.
+        func bringToFront() {
+            guard let sv = superview, sv.subviews.last !== self else { return }
+            sv.sortSubviews({ v1, v2, _ in
+                v1 is CardDragView ? .orderedDescending : .orderedSame
+            }, context: nil)
         }
 
         override func mouseDown(with event: NSEvent) {

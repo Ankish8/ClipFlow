@@ -415,14 +415,22 @@ class ClipboardViewModel {
 
     // MARK: - Pin / Unpin
 
-    /// Optimistically toggle pin with immediate local update.
+    /// Optimistically set pin state with immediate local update.
+    /// Uses explicit set (not toggle) to avoid race with stale cache.
     func setPinned(_ pinned: Bool, for item: ClipboardItem) {
         guard item.isPinned != pinned else { return }
-        togglePin(for: item)
+        // Optimistic update first so UI reflects change immediately
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
             var updated = items[idx]
             updated.isPinned = pinned
             items[idx] = updated
+        }
+        Task {
+            do {
+                try await clipboardService.setItemPinned(itemId: item.id, pinned: pinned)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
