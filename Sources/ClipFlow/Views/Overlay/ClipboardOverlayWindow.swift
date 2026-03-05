@@ -225,6 +225,56 @@ class ClipboardOverlayWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    // MARK: - Window-level card drag detection
+
+    // Track mouseDown position so we can find the drag source when threshold is exceeded.
+    // This runs before hitTest dispatch, so glass-effect z-ordering never blocks drags.
+    private var dragTrackStartPoint: NSPoint? = nil
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            dragTrackStartPoint = event.locationInWindow
+
+        case .leftMouseDragged:
+            if let startP = dragTrackStartPoint {
+                let curP = event.locationInWindow
+                if hypot(curP.x - startP.x, curP.y - startP.y) > 4 {
+                    dragTrackStartPoint = nil
+                    if let cardView = findCardDragView(at: startP) {
+                        cardView.beginDragFromWindow(event: event, startPoint: startP)
+                        // Don't return early — super dispatches to the view too,
+                        // but CardDragView.mouseDragged guards on dragStarted so it's a no-op.
+                    }
+                }
+            }
+
+        case .leftMouseUp:
+            dragTrackStartPoint = nil
+
+        default:
+            break
+        }
+        super.sendEvent(event)
+    }
+
+    /// DFS search for the DragSourceView whose bounds contain `windowPoint`.
+    private func findCardDragView(at windowPoint: NSPoint) -> DragSourceView? {
+        func search(_ view: NSView) -> DragSourceView? {
+            if let dsv = view as? DragSourceView {
+                let fromView: NSView? = nil
+                let localP = dsv.convert(windowPoint, from: fromView)
+                if dsv.bounds.contains(localP) { return dsv }
+            }
+            for subview in view.subviews {
+                if let found = search(subview) { return found }
+            }
+            return nil
+        }
+        guard let cv = contentView else { return nil }
+        return search(cv)
+    }
+
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
         // Suppress focus ring on any view that becomes first responder
         if let view = responder as? NSView {

@@ -277,8 +277,12 @@ private struct TagDropOverlay: NSViewRepresentable {
             DispatchQueue.main.async { self.coordinator?.parent.isDropTarget = false }
         }
 
-        // Pass all mouse/keyboard events through to the SwiftUI layer beneath
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        // acceptsFirstResponder = false: prevents keyboard focus capture.
+        // isOpaque = false: transparent; no background fill.
+        // hitTest uses the default (returns self for points within bounds) so AppKit's
+        // drag manager can route drag sessions to this view for draggingEntered / performDragOperation.
+        // SwiftUI button taps still work because SwiftUI registers NSGestureRecognizers at the
+        // NSHostingView level — those fire before hitTest dispatch.
         override var acceptsFirstResponder: Bool { false }
         override var isOpaque: Bool { false }
     }

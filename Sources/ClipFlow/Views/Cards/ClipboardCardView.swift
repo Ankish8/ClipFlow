@@ -924,6 +924,16 @@ private struct DragPreviewCard: View {
     }
 }
 
+// MARK: - Drag source base class (module-level so ClipboardOverlayWindow can find by type)
+
+/// NSView subclass whose subclasses can initiate a drag session on behalf of a clipboard card.
+/// Declared at module level (not inside a private struct) so ClipboardOverlayWindow
+/// can search the view hierarchy by type without importing private implementation details.
+class DragSourceView: NSView {
+    /// Subclasses override this to start a drag when the window detects threshold-exceeded movement.
+    func beginDragFromWindow(event: NSEvent, startPoint windowStartPoint: NSPoint) {}
+}
+
 // MARK: - AppKit Card Drag Overlay (all content types)
 
 /// Transparent NSView overlay that drives AppKit drag sessions for all card types.
@@ -985,7 +995,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
     // MARK: Drag-capturing NSView
 
-    final class CardDragView: NSView {
+    final class CardDragView: DragSourceView {
         var coordinator: Coordinator?
         var onHeaderHoverChanged: ((Bool) -> Void)?
         private var mouseDownPoint: NSPoint = .zero
@@ -997,6 +1007,10 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         // mouseMoved fires at ~60 Hz; without this guard every frame queues a
         // SwiftUI re-render, flooding the main queue and delaying button clicks.
         private var lastHoverInHeader = false
+
+        // dragStarted is set by both mouseDragged (when CardDragView is hitTest target)
+        // and beginDragFromWindow (called by ClipboardOverlayWindow.sendEvent before hitTest).
+        // The guard in each path prevents double drag-session starts.
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -1036,9 +1050,12 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         override func layout() {
             super.layout()
-            // Keep frame in sync after any SwiftUI layout pass that resizes our container
-            guard let sv = superview, frame != sv.bounds else { return }
-            frame = sv.bounds
+            // Keep frame in sync after any SwiftUI layout pass that resizes our container.
+            // Also re-assert frontmost z-order: glassEffect may insert NSGlassEffectView
+            // siblings between layout passes, shadowing us.
+            guard let sv = superview else { return }
+            if frame != sv.bounds { frame = sv.bounds }
+            bringToFront()
         }
 
         /// Repositions this view to be the frontmost sibling in AppKit's subview list.
@@ -1047,6 +1064,23 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         func bringToFront() {
             guard let sv = superview, sv.subviews.last !== self else { return }
             sv.addSubview(self, positioned: .above, relativeTo: nil)
+        }
+
+        /// Called by ClipboardOverlayWindow.sendEvent when drag threshold exceeded.
+        /// Runs before hitTest dispatch, so glass-effect z-ordering cannot block this path.
+        /// The dragStarted guard prevents double-start if mouseDragged also fires.
+        override func beginDragFromWindow(event: NSEvent, startPoint windowStartPoint: NSPoint) {
+            guard !dragStarted, let coord = coordinator else { return }
+            dragStarted = true
+            let curP  = convert(event.locationInWindow, from: nil)
+            let startP = convert(windowStartPoint, from: nil)
+            let pbItem = buildPasteboardItem(for: coord.parent)
+            let thumbnail = coord.parent.dragThumbnail ?? coord.parent.nsImage ?? blankThumbnail()
+            let dragItem = NSDraggingItem(pasteboardWriter: pbItem)
+            dragItem.setDraggingFrame(
+                CGRect(x: curP.x - startP.x, y: curP.y - startP.y, width: 235, height: 250),
+                contents: thumbnail)
+            beginDraggingSession(with: [dragItem], event: event, source: coord)
         }
 
         override func mouseDown(with event: NSEvent) {
