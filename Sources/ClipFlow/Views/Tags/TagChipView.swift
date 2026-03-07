@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ClipFlowCore
 import UniformTypeIdentifiers
 
@@ -50,6 +51,14 @@ private final class WeakNSView {
     init(_ v: NSView) { value = v }
 }
 
+/// Lightweight shared state for the active card-drag session.
+/// TagDropView uses this to opt into hit-testing only while a drag is underway,
+/// so normal clicks still pass through to the SwiftUI button beneath.
+@MainActor
+enum TagDragSessionState {
+    static var isDraggingCard = false
+}
+
 /// A colored chip button representing a tag
 struct TagChipView: View {
     let tag: Tag
@@ -62,7 +71,6 @@ struct TagChipView: View {
     let onColorChange: ((TagColor) -> Void)?  // Called when color is changed
     @Binding var showColorPicker: Bool  // External control for showing color picker
 
-    @State private var isHovering = false
     @State private var isDropTarget = false
     @State private var isRenaming = false
     @State private var editingName = ""
@@ -100,14 +108,16 @@ struct TagChipView: View {
     }
 
     var body: some View {
-        Button(action: {
-            if !isRenaming { onTap() }
-        }) {
+        Button(action: handlePrimaryClick) {
             HStack(spacing: 6) {
                 // Tag color indicator - clickable to open color picker
                 Circle()
                     .fill(tagColor)
                     .frame(width: 10, height: 10)
+                    .overlay {
+                        Circle()
+                            .stroke(tag.color.indicatorBorderColor(for: colorScheme), lineWidth: 0.75)
+                    }
                     .onTapGesture {
                         openColorPicker()
                     }
@@ -140,9 +150,6 @@ struct TagChipView: View {
                     Text(displayName)
                         .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
                         .lineLimit(1)
-                        .onTapGesture(count: 2) {
-                            startRename()
-                        }
                 }
 
                 // Item count badge (if > 0)
@@ -161,23 +168,14 @@ struct TagChipView: View {
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
         }
-        .buttonStyle(.toolbarChip(isSelected: isSelected || isActiveDrop, tint: tagColor))
-        // Drop target: scale up + colored ring so the user clearly sees the assignment target
-        .scaleEffect(isActiveDrop ? 1.1 : 1.0)
-        .overlay {
-            if isActiveDrop {
-                Capsule()
-                    .stroke(tagColor, lineWidth: 2)
-                    .overlay(alignment: .topTrailing) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(tagColor)
-                            .background(Circle().fill(.background))
-                            .offset(x: 6, y: -6)
-                    }
-            }
-        }
-        .animation(.spring(response: 0.2, dampingFraction: 0.65), value: isActiveDrop)
+        .buttonStyle(
+            .toolbarChip(
+                isSelected: isSelected,
+                tint: tagColor,
+                forceHover: isActiveDrop && !isSelected
+            )
+        )
+        .animation(.easeOut(duration: 0.12), value: isActiveDrop)
         .overlay {
             // AppKit NSDraggingDestination overlay — replaces SwiftUI .onDrop.
             // SwiftUI .onDrop reads drag data via NSItemProvider.loadDataRepresentation
@@ -198,7 +196,17 @@ struct TagChipView: View {
         }
     }
 
-    private var tagColor: Color { tag.color.swiftUIColor }
+    private var tagColor: Color { tag.color.adaptiveSwiftUIColor(for: colorScheme) }
+
+    private func handlePrimaryClick() {
+        guard !isRenaming else { return }
+
+        if NSApp.currentEvent?.clickCount == 2 {
+            startRename()
+        } else {
+            onTap()
+        }
+    }
 
     // MARK: - Color Change Methods
 
@@ -349,14 +357,11 @@ private struct TagDropOverlay: NSViewRepresentable {
             DispatchQueue.main.async { self.coordinator?.parent.isDropTarget = false }
         }
 
-        // hitTest returns nil so all mouse events pass through to the SwiftUI button
-        // layer beneath. TagDropView sits in its own NSHostingView (AppKitCardDragOverlay)
-        // which is a SIBLING of the card-content NSHostingView — NOT a descendant of it.
-        // Therefore the card-content NSHostingView's NSGestureRecognizers never see events
-        // consumed by TagDropView; returning nil is the only way to let button taps reach
-        // the sibling hosting view that actually holds the SwiftUI button.
-        // Drop detection is handled by TagDropCoordinator (coordinate-based, no hitTest needed).
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        // Let normal clicks pass through, but become hittable during an active card drag
+        // so AppKit can route NSDraggingDestination callbacks to this view reliably.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            TagDragSessionState.isDraggingCard ? self : nil
+        }
         override var acceptsFirstResponder: Bool { false }
         override var isOpaque: Bool { false }
     }

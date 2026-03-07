@@ -155,8 +155,11 @@ public class DatabaseManager {
             // Tags table
             try db.create(table: "tags") { t in
                 t.primaryKey("id", .text)
-                t.column("name", .text).notNull()
+                t.column("name", .text).notNull().unique()
                 t.column("color", .text).notNull()
+                t.column("icon", .text).notNull().defaults(to: "tag")
+                t.column("description", .text)
+                t.column("usage_count", .integer).defaults(to: 0)
                 t.column("created_at", .integer).notNull()
                 t.column("modified_at", .integer).notNull()
             }
@@ -178,8 +181,153 @@ public class DatabaseManager {
 
             // Performance indexes for tags
             try db.create(index: "idx_tags_name", on: "tags", columns: ["name"])
+            try db.create(index: "idx_tags_usage", on: "tags", columns: ["usage_count"])
             try db.create(index: "idx_item_tags_item", on: "item_tags", columns: ["item_id"])
             try db.create(index: "idx_item_tags_tag", on: "item_tags", columns: ["tag_id"])
+        }
+
+        migrator.registerMigration("v1.3") { db in
+            let hasTagIconColumn = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name = 'icon'"
+            ) ?? 0) > 0
+            if !hasTagIconColumn {
+                try db.alter(table: "tags") { t in
+                    t.add(column: "icon", .text).notNull().defaults(to: "tag")
+                }
+            }
+
+            let hasTagDescriptionColumn = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name = 'description'"
+            ) ?? 0) > 0
+            if !hasTagDescriptionColumn {
+                try db.alter(table: "tags") { t in
+                    t.add(column: "description", .text)
+                }
+            }
+
+            let hasTagUsageColumn = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name = 'usage_count'"
+            ) ?? 0) > 0
+            if !hasTagUsageColumn {
+                try db.alter(table: "tags") { t in
+                    t.add(column: "usage_count", .integer).defaults(to: 0)
+                }
+            }
+
+            let hasTagIdsColumn = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pragma_table_info('clipboard_items') WHERE name = 'tag_ids'"
+            ) ?? 0) > 0
+
+            if !hasTagIdsColumn {
+                try db.alter(table: "clipboard_items") { t in
+                    t.add(column: "tag_ids", .text)
+                }
+            }
+
+            let hasItemTagsTable = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'item_tags'"
+            ) ?? 0) > 0
+
+            if !hasItemTagsTable {
+                try db.create(table: "item_tags") { t in
+                    t.column("item_id", .text).notNull()
+                        .references("clipboard_items", onDelete: .cascade)
+                    t.column("tag_id", .text).notNull()
+                        .references("tags", onDelete: .cascade)
+                    t.column("added_at", .integer).notNull()
+                    t.primaryKey(["item_id", "tag_id"])
+                }
+            }
+
+            let hasItemIndex = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_item_tags_item'"
+            ) ?? 0) > 0
+            if !hasItemIndex {
+                try db.create(index: "idx_item_tags_item", on: "item_tags", columns: ["item_id"])
+            }
+
+            let hasTagIndex = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_item_tags_tag'"
+            ) ?? 0) > 0
+            if !hasTagIndex {
+                try db.create(index: "idx_item_tags_tag", on: "item_tags", columns: ["tag_id"])
+            }
+
+            let hasTagUsageIndex = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_tags_usage'"
+            ) ?? 0) > 0
+            if !hasTagUsageIndex {
+                try db.create(index: "idx_tags_usage", on: "tags", columns: ["usage_count"])
+            }
+
+            func encodedTagIds(_ tagIds: Set<UUID>) -> String? {
+                guard !tagIds.isEmpty else { return nil }
+                return try? JSONEncoder().encode(Array(tagIds)).base64EncodedString()
+            }
+
+            func writeTagIds(_ tagIds: Set<UUID>, for itemIdString: String) throws {
+                if let encodedTagIds = encodedTagIds(tagIds) {
+                    try db.execute(
+                        sql: "UPDATE clipboard_items SET tag_ids = ? WHERE id = ?",
+                        arguments: [encodedTagIds, itemIdString]
+                    )
+                } else {
+                    try db.execute(
+                        sql: "UPDATE clipboard_items SET tag_ids = NULL WHERE id = ?",
+                        arguments: [itemIdString]
+                    )
+                }
+            }
+
+            // Repair installs that already had item_tags but never got the denormalized
+            // clipboard_items.tag_ids column populated.
+            let itemIdsWithJunctionTags = try String.fetchAll(
+                db,
+                sql: "SELECT DISTINCT item_id FROM item_tags"
+            )
+            for itemIdString in itemIdsWithJunctionTags {
+                let tagIdStrings = try String.fetchAll(
+                    db,
+                    sql: "SELECT tag_id FROM item_tags WHERE item_id = ?",
+                    arguments: [itemIdString]
+                )
+                let tagIds = Set(tagIdStrings.compactMap(UUID.init(uuidString:)))
+                try writeTagIds(tagIds, for: itemIdString)
+            }
+
+            // Repair installs that stored tag_ids on clipboard_items but never created
+            // the item_tags junction table.
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, tag_ids FROM clipboard_items WHERE tag_ids IS NOT NULL"
+            )
+            let decoder = JSONDecoder()
+            for row in rows {
+                let itemIdString: String = row["id"]
+                guard let tagIdsString: String = row["tag_ids"],
+                      let tagIdsData = Data(base64Encoded: tagIdsString),
+                      let decodedTagIds = try? decoder.decode([UUID].self, from: tagIdsData) else {
+                    continue
+                }
+
+                for tagId in Set(decodedTagIds) {
+                    try db.execute(
+                        sql: """
+                            INSERT OR IGNORE INTO item_tags (item_id, tag_id, added_at)
+                            VALUES (?, ?, ?)
+                        """,
+                        arguments: [itemIdString, tagId.uuidString, Date().timeIntervalSince1970]
+                    )
+                }
+            }
         }
 
         return migrator
@@ -207,9 +355,9 @@ public class DatabaseManager {
             try db.execute(sql: """
                 INSERT OR REPLACE INTO clipboard_items (
                     id, content_type, content_data, content_text, metadata, source,
-                    timestamps, security, collection_ids, is_favorite, is_pinned,
+                    timestamps, security, collection_ids, tag_ids, is_favorite, is_pinned,
                     is_deleted, created_at, modified_at, accessed_at, expires_at, hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [
                 record.id,
                 record.contentType,
@@ -220,6 +368,7 @@ public class DatabaseManager {
                 record.timestamps,
                 record.security,
                 record.collectionIds,
+                record.tagIds,
                 record.isFavorite,
                 record.isPinned,
                 record.isDeleted,
@@ -281,6 +430,25 @@ public class DatabaseManager {
                 return try record.toClipboardItem()
             }
             return nil
+        }
+    }
+
+    public func getItem(hash: String) async throws -> ClipboardItem? {
+        try await read { db in
+            guard let record = try ClipboardItemRecord.fetchOne(
+                db,
+                sql: """
+                    SELECT * FROM clipboard_items
+                    WHERE hash = ? AND is_deleted = 0
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """,
+                arguments: [hash]
+            ) else {
+                return nil
+            }
+
+            return try record.toClipboardItem()
         }
     }
 
@@ -481,11 +649,15 @@ public class DatabaseManager {
         try await write { db in
             let tagIdString = id.uuidString
 
-            // Check if item_tags table exists (migration may not have run yet)
+            // Check if item_tags table exists (older installs may not have repaired yet)
             let tableExists = try Bool.fetchOne(db, sql: """
                 SELECT COUNT(*) > 0 FROM sqlite_master
                 WHERE type='table' AND name='item_tags'
             """) ?? false
+            let hasTagIdsColumn = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pragma_table_info('clipboard_items') WHERE name = 'tag_ids'"
+            ) ?? 0) > 0
 
             if tableExists {
                 // Get all items with this tag
@@ -501,8 +673,22 @@ public class DatabaseManager {
                     if let item = try ClipboardItemRecord.fetchOne(db, key: itemId) {
                         var clipboardItem = try item.toClipboardItem()
                         clipboardItem.tagIds.remove(id)
-                        let updatedRecord = ClipboardItemRecord(from: clipboardItem)
-                        try updatedRecord.update(db)
+                        if hasTagIdsColumn {
+                            let encodedTagIds = clipboardItem.tagIds.isEmpty
+                                ? nil
+                                : (try? JSONEncoder().encode(Array(clipboardItem.tagIds)).base64EncodedString())
+                            if let encodedTagIds {
+                                try db.execute(
+                                    sql: "UPDATE clipboard_items SET tag_ids = ?, modified_at = ? WHERE id = ?",
+                                    arguments: [encodedTagIds, Date().timeIntervalSince1970, itemId]
+                                )
+                            } else {
+                                try db.execute(
+                                    sql: "UPDATE clipboard_items SET tag_ids = NULL, modified_at = ? WHERE id = ?",
+                                    arguments: [Date().timeIntervalSince1970, itemId]
+                                )
+                            }
+                        }
                     }
                 }
             } else {
@@ -535,35 +721,71 @@ public class DatabaseManager {
 
     public func addTagToItem(tagId: UUID, itemId: UUID) async throws {
         try await write { db in
-            // Add to junction table
-            try db.execute(sql: """
-                INSERT OR IGNORE INTO item_tags (item_id, tag_id, added_at)
-                VALUES (?, ?, ?)
-            """, arguments: [itemId.uuidString, tagId.uuidString, Date().timeIntervalSince1970])
+            let hasItemTagsTable = try Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type='table' AND name='item_tags'
+            """) ?? false
+            let hasTagIdsColumn = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pragma_table_info('clipboard_items') WHERE name = 'tag_ids'"
+            ) ?? 0) > 0
+
+            if hasItemTagsTable {
+                try db.execute(sql: """
+                    INSERT OR IGNORE INTO item_tags (item_id, tag_id, added_at)
+                    VALUES (?, ?, ?)
+                """, arguments: [itemId.uuidString, tagId.uuidString, Date().timeIntervalSince1970])
+            }
 
             // Update denormalized tag_ids in clipboard_items
-            if let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
+            if hasTagIdsColumn,
+               let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
                 var clipboardItem = try item.toClipboardItem()
                 clipboardItem.tagIds.insert(tagId)
-                let updatedRecord = ClipboardItemRecord(from: clipboardItem)
-                try updatedRecord.update(db)
+                let encodedTagIds = try JSONEncoder().encode(Array(clipboardItem.tagIds)).base64EncodedString()
+                try db.execute(
+                    sql: "UPDATE clipboard_items SET tag_ids = ?, modified_at = ? WHERE id = ?",
+                    arguments: [encodedTagIds, Date().timeIntervalSince1970, itemId.uuidString]
+                )
             }
         }
     }
 
     public func removeTagFromItem(tagId: UUID, itemId: UUID) async throws {
         try await write { db in
-            // Remove from junction table
-            try db.execute(sql: """
-                DELETE FROM item_tags WHERE item_id = ? AND tag_id = ?
-            """, arguments: [itemId.uuidString, tagId.uuidString])
+            let hasItemTagsTable = try Bool.fetchOne(db, sql: """
+                SELECT COUNT(*) > 0 FROM sqlite_master
+                WHERE type='table' AND name='item_tags'
+            """) ?? false
+            let hasTagIdsColumn = (try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM pragma_table_info('clipboard_items') WHERE name = 'tag_ids'"
+            ) ?? 0) > 0
+
+            if hasItemTagsTable {
+                try db.execute(sql: """
+                    DELETE FROM item_tags WHERE item_id = ? AND tag_id = ?
+                """, arguments: [itemId.uuidString, tagId.uuidString])
+            }
 
             // Update denormalized tag_ids in clipboard_items
-            if let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
+            if hasTagIdsColumn,
+               let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
                 var clipboardItem = try item.toClipboardItem()
                 clipboardItem.tagIds.remove(tagId)
-                let updatedRecord = ClipboardItemRecord(from: clipboardItem)
-                try updatedRecord.update(db)
+                let modifiedAt = Date().timeIntervalSince1970
+                if clipboardItem.tagIds.isEmpty {
+                    try db.execute(
+                        sql: "UPDATE clipboard_items SET tag_ids = NULL, modified_at = ? WHERE id = ?",
+                        arguments: [modifiedAt, itemId.uuidString]
+                    )
+                } else {
+                    let encodedTagIds = try JSONEncoder().encode(Array(clipboardItem.tagIds)).base64EncodedString()
+                    try db.execute(
+                        sql: "UPDATE clipboard_items SET tag_ids = ?, modified_at = ? WHERE id = ?",
+                        arguments: [encodedTagIds, modifiedAt, itemId.uuidString]
+                    )
+                }
             }
         }
     }

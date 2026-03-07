@@ -190,18 +190,18 @@ public class ClipboardMonitorService {
 
             // Store the item
             NSLog("💾 About to save item to storage")
-            try await storageService.saveItem(secureItem)
-            NSLog("💾 Successfully saved item to storage: \(secureItem.content.contentType)")
+            let persistedItem = try await storageService.saveItem(secureItem)
+            NSLog("💾 Successfully saved item to storage: \(persistedItem.content.contentType)")
 
             // Update statistics
             totalItemsProcessed += 1
             lastDetectionTime = Date()
 
             // Notify subscribers
-            itemSubject.send(secureItem)
+            itemSubject.send(persistedItem)
             NSLog("📢 Notified subscribers about new item")
 
-            return secureItem
+            return persistedItem
 
         } catch {
             detectionErrors += 1

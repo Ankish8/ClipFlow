@@ -452,6 +452,7 @@ public class ClipboardService: ClipboardServiceAPI {
             timestamps: ItemTimestamps(),
             security: item.security,
             collectionIds: item.collectionIds,
+            tagIds: item.tagIds,
             isFavorite: item.isFavorite,
             isPinned: item.isPinned,
             isDeleted: item.isDeleted

@@ -21,12 +21,7 @@ struct ClipboardCardView: View {
     // @State would be lost when the card view is recreated after overlay hides.
     private static var editWindowStore:    [UUID: NSWindow] = [:]
     private static var previewWindowStore: [UUID: NSWindow] = [:]
-    @State private var tagTintColor: Color = .clear
     @State private var isHoveringHeader = false
-
-    // PERFORMANCE: Cache computed tags instead of filtering on every render
-    @State private var itemTags: [Tag] = []
-    @State private var allTags: [Tag] = []
 
     // PERFORMANCE: Cache time-ago string — RelativeDateTimeFormatter + Date() is non-trivial
     @State private var cachedTimeAgo = ""
@@ -41,7 +36,10 @@ struct ClipboardCardView: View {
     // Drag thumbnail: full card rendered via ImageRenderer, used as NSDraggingItem preview
     @State private var dragThumbnail: NSImage? = nil
 
-    init(item: ClipboardItem, index: Int, isSelected: Bool, viewModel: ClipboardViewModel) {
+    init(item: ClipboardItem,
+         index: Int,
+         isSelected: Bool,
+         viewModel: ClipboardViewModel) {
         self.item = item
         self.index = index
         self.isSelected = isSelected
@@ -54,11 +52,6 @@ struct ClipboardCardView: View {
             // Card header with type badge and index
             cardHeader
 
-            // Tag indicators (if any tags)
-            if !itemTags.isEmpty {
-                tagIndicators
-            }
-
             // Content preview
             contentPreview
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -69,9 +62,9 @@ struct ClipboardCardView: View {
         .frame(width: cardWidth, height: 250)
         .containerShape(.rect(cornerRadius: 20))
         .glassEffect(
-            tagTintColor == .clear
+            primaryTagColor == nil
                 ? .regular.interactive()
-                : .regular.tint(tagTintColor.opacity(0.1)).interactive(),
+                : .regular.tint(primaryTagColor!.opacity(0.12)).interactive(),
             in: .rect(cornerRadius: 20)
         )
         .animation(.easeInOut(duration: 0.2), value: isSelected)
@@ -100,12 +93,6 @@ struct ClipboardCardView: View {
             renameSheet
         }
         .onAppear {
-            // PERFORMANCE: Cache tags once on appear instead of computing every render
-            allTags = TagService.shared.getAllTags()
-            itemTags = allTags.filter { item.tagIds.contains($0.id) }
-            // Apply first tag's color as a subtle card tint
-            tagTintColor = itemTags.first.map { $0.color.swiftUIColor } ?? .clear
-
             // PERFORMANCE: Cache time-ago once — avoids formatter + Date() on every render
             cachedTimeAgo = Self.relativeDateFormatter.localizedString(
                 for: item.timestamps.createdAt, relativeTo: Date())
@@ -121,8 +108,10 @@ struct ClipboardCardView: View {
                 }
             }
 
-            // Build initial drag thumbnail (image cards show placeholder until decode below)
-            buildDragThumbnail()
+            // Defer thumbnail rendering so tag/filter changes can paint immediately.
+            DispatchQueue.main.async {
+                buildDragThumbnail()
+            }
 
             // Decode NSImage and write temp file — both needed before the user drags.
             // .utility priority avoids saturating CPU threads when many image cards appear.
@@ -158,48 +147,90 @@ struct ClipboardCardView: View {
         dragThumbnail = renderer.nsImage
     }
 
+    private var liveItem: ClipboardItem {
+        viewModel.items.first(where: { $0.id == item.id }) ?? item
+    }
+
+    private var availableTags: [Tag] {
+        TagService.shared.getAllTags()
+    }
+
+    private var appliedTags: [Tag] {
+        let tagIds = liveItem.tagIds
+        return availableTags.filter { tagIds.contains($0.id) }
+    }
+
+    private var primaryTag: Tag? {
+        let tagIds = liveItem.tagIds
+
+        if let preferredTagId = viewModel.preferredTintTagId(for: liveItem.id, among: tagIds),
+           let preferredTag = availableTags.first(where: { $0.id == preferredTagId }) {
+            return preferredTag
+        }
+
+        return appliedTags.first
+    }
+
+    private var primaryTagColor: Color? {
+        primaryTag?.color.adaptiveSwiftUIColor(for: colorScheme)
+    }
+
+    private var headerBackgroundColor: Color {
+        if let primaryTagColor {
+            return primaryTagColor.opacity(colorScheme == .dark ? 0.34 : 0.28)
+        }
+        return Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.05)
+    }
+
 
     
 
     private var cardHeader: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                // Badge shows custom name when set, otherwise content type
-                let badgeLabel = viewModel.customName(for: item.id)?.uppercased()
-                    ?? contentTypeInfo.name.uppercased()
-                Text(badgeLabel)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
+        HStack {
+            let currentItem = liveItem
 
-                // Pin button — shown when pinned or hovering.
-                if item.isPinned || isHoveringHeader {
-                    HeaderIconButton(
-                        icon: item.isPinned ? "pin.fill" : "pin",
-                        activeColor: item.isPinned ? .white : .secondary,
-                        rotation: item.isPinned ? 45 : 0
-                    ) {
-                        viewModel.setPinned(!item.isPinned, for: item)
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    .animation(.easeInOut(duration: 0.15), value: isHoveringHeader)
+            // Badge shows custom name when set, otherwise content type
+            let badgeLabel = viewModel.customName(for: item.id)?.uppercased()
+                ?? contentTypeInfo.name.uppercased()
+            Text(badgeLabel)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
+
+            // Pin button — shown when pinned or hovering.
+            if currentItem.isPinned || isHoveringHeader {
+                HeaderIconButton(
+                    icon: currentItem.isPinned ? "pin.fill" : "pin",
+                    activeColor: currentItem.isPinned ? .white : .secondary,
+                    rotation: currentItem.isPinned ? 45 : 0
+                ) {
+                    viewModel.setPinned(!currentItem.isPinned, for: currentItem)
                 }
-
-                Spacer()
-
-                // Source app icon badge
-                appIconBadge
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                .animation(.easeInOut(duration: 0.15), value: isHoveringHeader)
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 10)
 
+            Spacer()
+
+            // Source app icon badge
+            appIconBadge
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 10)
+        .background {
+            UnevenRoundedRectangle(
+                cornerRadii: .init(topLeading: 20, bottomLeading: 0, bottomTrailing: 0, topTrailing: 20),
+                style: .continuous
+            )
+            .fill(headerBackgroundColor)
+        }
+        .overlay(alignment: .bottom) {
             Divider()
         }
-        .background(Color.primary.opacity(0.04))
     }
 
     private var contentPreview: some View {
@@ -398,39 +429,6 @@ struct ClipboardCardView: View {
         }
     }
 
-    // MARK: - Tag Indicators
-
-    private var tagIndicators: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(itemTags.prefix(2)) { tag in
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(tag.color.swiftUIColor)
-                            .frame(width: 8, height: 8)
-
-                        Text(tag.name)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.primary)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(.quaternary, in: .rect(corners: .concentric(minimum: 8), isUniform: true))
-                }
-
-                if itemTags.count > 2 {
-                    Text("+\(itemTags.count - 2)")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-        }
-    }
-
     // MARK: - Context Menu
 
     private var cardContextMenu: some View {
@@ -472,8 +470,8 @@ struct ClipboardCardView: View {
 
             Divider()
 
-            Button(item.isPinned ? "Unpin" : "Pin") {
-                viewModel.setPinned(!item.isPinned, for: item)
+            Button(liveItem.isPinned ? "Unpin" : "Pin") {
+                viewModel.setPinned(!liveItem.isPinned, for: liveItem)
             }
 
             Button("Preview") {
@@ -488,10 +486,10 @@ struct ClipboardCardView: View {
 
             // Tag submenu
             Menu("Tag") {
-                ForEach(allTags) { tag in
+                ForEach(availableTags) { tag in
                     Button(action: { toggleTag(tag) }) {
                         HStack {
-                            if itemTags.contains(where: { $0.id == tag.id }) {
+                            if appliedTags.contains(where: { $0.id == tag.id }) {
                                 Image(systemName: "checkmark")
                             }
                             Text(tag.name)
@@ -506,9 +504,6 @@ struct ClipboardCardView: View {
                     Text("Create New Tag").font(.headline)
                     InlineTagCreator { newTag in
                         viewModel.addTagToItem(tagId: newTag.id, itemId: item.id)
-                        itemTags.append(newTag)
-                        allTags.append(newTag)
-                        tagTintColor = newTag.color.swiftUIColor
                         showNewTagCreator = false
                     }
                 }
@@ -667,12 +662,10 @@ struct ClipboardCardView: View {
     // MARK: - Tag Management
 
     private func toggleTag(_ tag: Tag) {
-        if itemTags.contains(where: { $0.id == tag.id }) {
+        if appliedTags.contains(where: { $0.id == tag.id }) {
             viewModel.removeTagFromItem(tagId: tag.id, itemId: item.id)
-            itemTags.removeAll { $0.id == tag.id }
         } else {
             viewModel.addTagToItem(tagId: tag.id, itemId: item.id)
-            itemTags.append(tag)
         }
     }
 }
@@ -719,6 +712,7 @@ private struct HeaderIconButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
 
     var body: some View {
         Button(action: action) {
@@ -726,13 +720,26 @@ private struct HeaderIconButton: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(activeColor)
                 .rotationEffect(.degrees(rotation))
-                .frame(width: 22, height: 22)
-                .background(isHovered ? Color.white.opacity(0.15) : Color.clear,
-                            in: Circle())
+                .frame(width: 16, height: 16)
+                .padding(6)
+                .background(backgroundColor, in: Circle())
         }
         .buttonStyle(.plain)
+        .contentShape(Circle())
         .onHover { isHovered = $0 }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in isPressed = true }
+                .onEnded { _ in isPressed = false }
+        )
         .animation(.easeInOut(duration: 0.1), value: isHovered)
+        .animation(.easeInOut(duration: 0.08), value: isPressed)
+    }
+
+    private var backgroundColor: Color {
+        if isPressed { return Color.white.opacity(0.22) }
+        if isHovered { return Color.white.opacity(0.15) }
+        return Color.clear
     }
 }
 
@@ -1043,6 +1050,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
                 TagDropCoordinator.shared.onTagApplied?(parent.item.id, tagId)
                 NSCursor.pop()  // Restore cursor after drop on tag
             }
+            TagDragSessionState.isDraggingCard = false
             TagDropCoordinator.shared.hoveredTagId = nil
         }
     }
@@ -1126,6 +1134,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         override func beginDragFromWindow(event: NSEvent, startPoint windowStartPoint: NSPoint) {
             guard !dragStarted, let coord = coordinator else { return }
             dragStarted = true
+            TagDragSessionState.isDraggingCard = true
             // Immediately hide the pin button so it can't fire during the drag.
             // The hover state is reset to false — SwiftUI will hide the button on
             // the next render, cancelling any in-flight gesture recogniser.
@@ -1158,6 +1167,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
                 return
             }
             dragStarted = true
+            TagDragSessionState.isDraggingCard = true
 
             // Mirror the window-level drag path: once a drag starts, collapse header
             // hover UI so the pin button cannot steal follow-up mouse handling.
@@ -1183,6 +1193,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         override func mouseUp(with event: NSEvent) {
             dragStarted = false
+            TagDragSessionState.isDraggingCard = false
             super.mouseUp(with: event)
         }
 
@@ -1203,7 +1214,9 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             for sibling in sv.subviews[..<selfIndex].reversed() {
                 let siblingPoint = sibling.convert(superPoint, from: sv)
                 guard let hitView = sibling.hitTest(siblingPoint) else { continue }
-                return isInteractiveHeaderTarget(hitView)
+                if isInteractiveHeaderTarget(hitView) {
+                    return true
+                }
             }
 
             return false

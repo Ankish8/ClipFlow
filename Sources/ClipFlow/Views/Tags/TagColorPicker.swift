@@ -32,7 +32,7 @@ struct TagColorPicker: View {
 
     private func colorButton(for color: TagColor) -> some View {
         let isSelected = selectedColor == color
-        let swiftUIColor = color.swiftUIColor
+        let swiftUIColor = color.adaptiveSwiftUIColor(for: colorScheme)
 
         return Button(action: {
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -44,6 +44,10 @@ struct TagColorPicker: View {
                 Circle()
                     .fill(swiftUIColor)
                     .frame(width: 28, height: 28)
+                    .overlay {
+                        Circle()
+                            .stroke(color.indicatorBorderColor(for: colorScheme), lineWidth: 0.9)
+                    }
 
                 if isSelected {
                     Image(systemName: "checkmark")
@@ -65,6 +69,8 @@ struct TagColorPickerMenu: View {
     @Binding var selectedColor: TagColor
     let onColorSelected: ((TagColor) -> Void)?
 
+    @Environment(\.colorScheme) private var colorScheme
+
     init(selectedColor: Binding<TagColor>, onColorSelected: ((TagColor) -> Void)? = nil) {
         self._selectedColor = selectedColor
         self.onColorSelected = onColorSelected
@@ -73,7 +79,7 @@ struct TagColorPickerMenu: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(TagColor.allCases, id: \.self) { color in
-                let swiftUIColor = color.swiftUIColor
+                let swiftUIColor = color.adaptiveSwiftUIColor(for: colorScheme)
 
                 Button(action: {
                     selectedColor = color
@@ -82,6 +88,10 @@ struct TagColorPickerMenu: View {
                     Circle()
                         .fill(swiftUIColor)
                         .frame(width: 20, height: 20)
+                        .overlay {
+                            Circle()
+                                .stroke(color.indicatorBorderColor(for: colorScheme), lineWidth: 0.8)
+                        }
                 }
                 .buttonStyle(.glass(.regular.tint(swiftUIColor)))
             }

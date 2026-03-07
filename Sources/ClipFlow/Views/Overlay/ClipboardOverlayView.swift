@@ -29,7 +29,7 @@ struct ClipboardOverlayView: View {
     // SwiftUI auto-tracks all reads here — no onChange synchronisation needed.
     // Pinned items sort first; then newest-first (viewModel.items order).
     private var filteredItems: [ClipboardItem] {
-        var items = viewModel.items.sorted { $0.isPinned && !$1.isPinned }
+        var items = viewModel.items
 
         if !selectedTagIds.isEmpty {
             items = items.filter { !$0.tagIds.isDisjoint(with: selectedTagIds) }
@@ -43,7 +43,22 @@ struct ClipboardOverlayView: View {
             }
         }
 
-        return items
+        // Preserve newest-first ordering from viewModel.items and lift pinned items
+        // with a linear-time stable partition instead of re-sorting every render.
+        var pinnedItems: [ClipboardItem] = []
+        var unpinnedItems: [ClipboardItem] = []
+        pinnedItems.reserveCapacity(items.count)
+        unpinnedItems.reserveCapacity(items.count)
+
+        for item in items {
+            if item.isPinned {
+                pinnedItems.append(item)
+            } else {
+                unpinnedItems.append(item)
+            }
+        }
+
+        return pinnedItems + unpinnedItems
     }
 
     var body: some View {
@@ -98,6 +113,14 @@ struct ClipboardOverlayView: View {
                 guard !Task.isCancelled else { return }
                 debouncedSearch = searchText
             }
+        }
+        .onChange(of: selectedTagIds) { _, _ in
+            let maxIndex = max(filteredItems.count - 1, 0)
+            selectedIndex = min(selectedIndex, maxIndex)
+        }
+        .onChange(of: debouncedSearch) { _, _ in
+            let maxIndex = max(filteredItems.count - 1, 0)
+            selectedIndex = min(selectedIndex, maxIndex)
         }
     }
 

@@ -11,6 +11,7 @@ class ClipboardViewModel {
     var isLoading = false
     var errorMessage: String?
     var statistics: ClipboardStatistics?
+    var preferredTintTagIDs: [UUID: UUID] = [:]
 
     @ObservationIgnored private var cancellables = Set<AnyCancellable>()
     @ObservationIgnored private let clipboardService = ClipboardService.shared
@@ -63,6 +64,7 @@ class ClipboardViewModel {
             // Known item (pin/unpin, edit, favorite, etc.) — update in-place so
             // its position is preserved. filteredItems' sort will move it if needed.
             items[idx] = item
+            reconcilePreferredTint(for: item)
             itemHashSet.insert(item.metadata.hash)
             return
         }
@@ -74,6 +76,7 @@ class ClipboardViewModel {
 
         // Genuinely new item — add at front.
         items.insert(item, at: 0)
+        reconcilePreferredTint(for: item)
         itemIdSet.insert(item.id)
         itemHashSet.insert(item.metadata.hash)
 
@@ -114,14 +117,17 @@ class ClipboardViewModel {
 
                 // Only update items if not currently dragging
                 if !isDragInProgress {
-                    // Merge history with existing items using Set lookups for O(n) instead of O(n²)
-                    let existingIds = Set(items.map(\.id))
-                    let existingHashes = Set(items.map(\.metadata.hash))
-                    var mergedItems = items
-                    for historyItem in history
-                        where !existingIds.contains(historyItem.id)
-                           && !existingHashes.contains(historyItem.metadata.hash) {
-                        mergedItems.append(historyItem)
+                    // Use freshly loaded history as the source of truth, then append any
+                    // local-only items that were added after the fetch started.
+                    var mergedItems = history
+                    var mergedIds = Set(history.map(\.id))
+                    var mergedHashes = Set(history.map(\.metadata.hash))
+                    for existingItem in items
+                        where !mergedIds.contains(existingItem.id)
+                           && !mergedHashes.contains(existingItem.metadata.hash) {
+                        mergedItems.append(existingItem)
+                        mergedIds.insert(existingItem.id)
+                        mergedHashes.insert(existingItem.metadata.hash)
                     }
                     items = mergedItems
                     rebuildSets()
@@ -318,34 +324,47 @@ class ClipboardViewModel {
     // MARK: - Tag Management
 
     func addTagToItem(tagId: UUID, itemId: UUID) {
+        let alreadyTagged = item(withId: itemId)?.tagIds.contains(tagId) ?? false
+        guard !alreadyTagged else {
+            NSLog("⚠️ Skipping tag add for item \(itemId) because tag \(tagId) is already applied")
+            return
+        }
+
+        preferredTintTagIDs[itemId] = tagId
+        applyLocalTagChange(tagId: tagId, itemId: itemId, isAdding: true)
+
         Task {
             do {
                 try await ClipFlowBackend.TagService.shared.tagItem(tagId: tagId, itemId: itemId)
-
-                // Update local item
-                if let index = items.firstIndex(where: { $0.id == itemId }) {
-                    var updatedItem = items[index]
-                    updatedItem.tagIds.insert(tagId)
-                    items[index] = updatedItem
-                }
             } catch {
+                NSLog("❌ Failed to tag item \(itemId) with tag \(tagId): \(error.localizedDescription)")
+                if preferredTintTagIDs[itemId] == tagId {
+                    preferredTintTagIDs.removeValue(forKey: itemId)
+                }
+                applyLocalTagChange(tagId: tagId, itemId: itemId, isAdding: false)
                 errorMessage = error.localizedDescription
             }
         }
     }
 
     func removeTagFromItem(tagId: UUID, itemId: UUID) {
+        let alreadyTagged = item(withId: itemId)?.tagIds.contains(tagId) ?? false
+        guard alreadyTagged else {
+            NSLog("⚠️ Skipping tag removal for item \(itemId) because tag \(tagId) is not applied")
+            return
+        }
+
+        if preferredTintTagIDs[itemId] == tagId {
+            preferredTintTagIDs.removeValue(forKey: itemId)
+        }
+        applyLocalTagChange(tagId: tagId, itemId: itemId, isAdding: false)
+
         Task {
             do {
                 try await ClipFlowBackend.TagService.shared.untagItem(tagId: tagId, itemId: itemId)
-
-                // Update local item
-                if let index = items.firstIndex(where: { $0.id == itemId }) {
-                    var updatedItem = items[index]
-                    updatedItem.tagIds.remove(tagId)
-                    items[index] = updatedItem
-                }
             } catch {
+                NSLog("❌ Failed to remove tag \(tagId) from item \(itemId): \(error.localizedDescription)")
+                applyLocalTagChange(tagId: tagId, itemId: itemId, isAdding: true)
                 errorMessage = error.localizedDescription
             }
         }
@@ -365,6 +384,43 @@ class ClipboardViewModel {
     func filteredItems(byTags tagIds: Set<UUID>) -> [ClipboardItem] {
         guard !tagIds.isEmpty else { return items }
         return items.filter { !$0.tagIds.isDisjoint(with: tagIds) }
+    }
+
+    func preferredTintTagId(for itemId: UUID, among tagIds: Set<UUID>) -> UUID? {
+        guard let preferredTagId = preferredTintTagIDs[itemId],
+              tagIds.contains(preferredTagId) else {
+            return nil
+        }
+        return preferredTagId
+    }
+
+    private func item(withId itemId: UUID) -> ClipboardItem? {
+        items.first { $0.id == itemId }
+    }
+
+    private func reconcilePreferredTint(for item: ClipboardItem) {
+        guard let preferredTagId = preferredTintTagIDs[item.id],
+              !item.tagIds.contains(preferredTagId) else {
+            return
+        }
+        preferredTintTagIDs.removeValue(forKey: item.id)
+    }
+
+    private func applyLocalTagChange(tagId: UUID, itemId: UUID, isAdding: Bool) {
+        guard let index = items.firstIndex(where: { $0.id == itemId }) else {
+            NSLog("❌ Unable to apply local tag change because item \(itemId) is not in memory")
+            return
+        }
+
+        var updatedItems = items
+        var updatedItem = updatedItems[index]
+        if isAdding {
+            updatedItem.tagIds.insert(tagId)
+        } else {
+            updatedItem.tagIds.remove(tagId)
+        }
+        updatedItems[index] = updatedItem
+        items = updatedItems
     }
 
     // MARK: - Copy to Clipboard (no paste)

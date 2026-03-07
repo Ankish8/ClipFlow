@@ -25,6 +25,7 @@ struct ExpandableSearchBar: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
+                .frame(width: 16)
 
             TextField(placeholder, text: $searchText)
                 .textFieldStyle(.plain)
@@ -36,17 +37,20 @@ struct ExpandableSearchBar: View {
 
             if !searchText.isEmpty {
                 Button(action: clearSearch) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                        .background(Color.primary.opacity(0.08), in: Circle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .contentShape(Circle())
                 .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .glassEffect(.regular.tint(Color.accentColor.opacity(0.15)).interactive(), in: .capsule)
+        .frame(height: 34)
+        .toolbarInputShell()
         .animation(.easeInOut(duration: 0.1), value: searchText.isEmpty)
         .onAppear {
             // Small delay lets the view settle into the hierarchy before claiming focus

@@ -29,7 +29,7 @@ public class StorageService {
 
     // MARK: - Item Operations
 
-    public func saveItem(_ item: ClipboardItem) async throws {
+    public func saveItem(_ item: ClipboardItem) async throws -> ClipboardItem {
         // TEMPORARY: Skip performance monitoring for debugging
         NSLog("🗂️ StorageService.saveItem started")
 
@@ -37,7 +37,12 @@ public class StorageService {
         NSLog("🔍 Checking for duplicates")
         if await itemExists(hash: item.metadata.hash) {
             NSLog("⚠️ Item already exists, skipping")
-            return
+            if var existingItem = try await databaseManager.getItem(hash: item.metadata.hash) {
+                existingItem = await loadLargeContent(existingItem)
+                await cacheManager.cacheItem(existingItem, hash: existingItem.metadata.hash)
+                return existingItem
+            }
+            return item
         }
         NSLog("✅ No duplicates found")
 
@@ -67,6 +72,7 @@ public class StorageService {
         NSLog("📊 Statistics updated: totalItems=\(totalItemsStored)")
 
         NSLog("✅ StorageService.saveItem completed successfully")
+        return modifiedItem
     }
 
     public func getItem(id: UUID) async throws -> ClipboardItem? {
@@ -340,6 +346,7 @@ public class StorageService {
                     timestamps: item.timestamps,
                     security: item.security,
                     collectionIds: item.collectionIds,
+                    tagIds: item.tagIds,
                     isFavorite: item.isFavorite,
                     isPinned: item.isPinned,
                     isDeleted: item.isDeleted

@@ -10,6 +10,7 @@ struct InlineTagCreator: View {
     @State private var showColorPicker = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var isHoveringPlusButton = false
 
     let onTagCreated: (Tag) -> Void
 
@@ -35,25 +36,42 @@ struct InlineTagCreator: View {
                 Text("New Tag")
                     .font(.system(size: 12, weight: .medium))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .foregroundStyle(Color.primary.opacity(colorScheme == .dark ? 0.82 : 0.74))
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background {
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .fill(isHoveringPlusButton ? plusButtonHoverBackground : plusButtonBackground)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .strokeBorder(plusButtonBorderColor, lineWidth: 1)
+            }
         }
-        .buttonStyle(.toolbarChip())
+        .buttonStyle(.plain)
+        .onHover { isHoveringPlusButton = $0 }
     }
 
     // MARK: - Creation View
 
     private var creationView: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             // Color indicator button
             Button(action: {
                 showColorPicker.toggle()
             }) {
                 Circle()
-                    .fill(selectedColor.swiftUIColor)
-                    .frame(width: 16, height: 16)
+                    .fill(selectedColor.adaptiveSwiftUIColor(for: colorScheme))
+                    .frame(width: 12, height: 12)
+                    .overlay {
+                        Circle()
+                            .stroke(selectedColor.indicatorBorderColor(for: colorScheme), lineWidth: 0.75)
+                    }
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(0.08), in: Circle())
             }
-            .buttonStyle(.glass(.regular.tint(selectedColor.swiftUIColor)))
+            .buttonStyle(.plain)
+            .contentShape(Circle())
             .popover(isPresented: $showColorPicker) {
                 TagColorPicker(selectedColor: $selectedColor)
                     .frame(width: 200)
@@ -64,6 +82,7 @@ struct InlineTagCreator: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($isTextFieldFocused)
+                .focusEffectDisabled()
                 .onSubmit {
                     NSLog("📝 Tag creator: onSubmit triggered")
                     createTag()
@@ -86,32 +105,36 @@ struct InlineTagCreator: View {
                     cancelCreation()
                     return .handled
                 }
-                .frame(minWidth: 80, maxWidth: 150)
+                .frame(minWidth: 110, maxWidth: 170)
 
             // Confirm button
             if !tagName.isEmpty {
                 Button(action: createTag) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14, weight: .medium))
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.green)
+                        .frame(width: 18, height: 18)
+                        .background(Color.green.opacity(0.14), in: Circle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
+                .contentShape(Circle())
+                .transition(.scale.combined(with: .opacity))
             }
 
             // Cancel button
             Button(action: cancelCreation) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 14, weight: .medium))
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .background(Color.primary.opacity(0.08), in: Circle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .contentShape(Circle())
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .glassEffect(
-            showError ? .regular.tint(.red.opacity(0.3)).interactive() : .regular.tint(Color.accentColor.opacity(0.15)).interactive(),
-            in: .capsule
-        )
+        .frame(height: 34)
+        .toolbarInputShell(isError: showError)
         .modifier(ShakeEffect(shakes: showError ? 2 : 0))
         .onAppear {
             isTextFieldFocused = true
@@ -120,6 +143,22 @@ struct InlineTagCreator: View {
                 selectedColor = TagColor.random()
             }
         }
+    }
+
+    private var plusButtonBackground: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.05)
+            : Color.black.opacity(0.035)
+    }
+
+    private var plusButtonHoverBackground: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.09)
+            : Color.black.opacity(0.06)
+    }
+
+    private var plusButtonBorderColor: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.10)
     }
 
     // MARK: - Actions
