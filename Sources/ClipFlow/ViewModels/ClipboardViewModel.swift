@@ -194,6 +194,7 @@ class ClipboardViewModel {
         Task {
             do {
                 try await clipboardService.paste(item, transform: transform)
+                SoundManager.shared.play(.paste)
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -204,6 +205,7 @@ class ClipboardViewModel {
         Task {
             do {
                 try await clipboardService.pasteMultiple(items)
+                SoundManager.shared.play(.paste)
             } catch {
                 errorMessage = error.localizedDescription
             }

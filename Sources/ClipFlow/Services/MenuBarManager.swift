@@ -74,9 +74,7 @@ final class MenuBarManager: NSObject, ObservableObject {
                     await self?.updateRecentItems(with: item)
 
                     // Play feedback sound if enabled
-                    if UserDefaults.standard.bool(forKey: "enableSounds") {
-                        NSSound(named: "Tink")?.play()
-                    }
+                    SoundManager.shared.play(.clipboardCapture)
                 }
             }
             .store(in: &cancellables)

@@ -98,6 +98,7 @@ class OverlayManager: ObservableObject {
         window.orderFront(nil)
 
         isVisible = true
+        SoundManager.shared.play(.overlayOpen)
 
         // Reset animation flag after animation completes (0.2s)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -112,6 +113,7 @@ class OverlayManager: ObservableObject {
 
         overlayWindow?.hideOverlay()
         isVisible = false
+        SoundManager.shared.play(.overlayClose)
 
         // CRITICAL: Restore focus to previous app immediately after hiding
         if let app = previousActiveApp {

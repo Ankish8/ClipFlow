@@ -49,7 +49,17 @@ private enum SettingsPage: Hashable {
 
 private struct GeneralSettingsPage: View {
     @AppStorage("enableSounds") private var enableSounds = false
+    @AppStorage("selectedSound") private var selectedSound = "Tink"
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
+
+    // Per-event toggle states — initialized from SoundManager defaults
+    @State private var eventToggles: [SoundManager.Event: Bool] = {
+        var map: [SoundManager.Event: Bool] = [:]
+        for event in SoundManager.Event.allCases {
+            map[event] = SoundManager.shared.isEnabled(event)
+        }
+        return map
+    }()
 
     var body: some View {
         Form {
@@ -57,8 +67,41 @@ private struct GeneralSettingsPage: View {
                 Toggle("Launch at login", isOn: $launchAtLogin)
             }
 
-            Section("Feedback") {
+            Section("Sound Effects") {
                 Toggle("Enable sound effects", isOn: $enableSounds)
+
+                if enableSounds {
+                    LabeledContent("Sound") {
+                        HStack(spacing: 8) {
+                            Picker("", selection: $selectedSound) {
+                                ForEach(SoundManager.availableSounds, id: \.self) { name in
+                                    Text(name).tag(name)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 130)
+
+                            Button {
+                                SoundManager.shared.preview(selectedSound)
+                            } label: {
+                                Image(systemName: "speaker.wave.2")
+                                    .font(.system(size: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Preview sound")
+                        }
+                    }
+
+                    ForEach(SoundManager.Event.allCases, id: \.rawValue) { event in
+                        Toggle(event.label, isOn: Binding(
+                            get: { eventToggles[event] ?? event.defaultEnabled },
+                            set: { newValue in
+                                eventToggles[event] = newValue
+                                SoundManager.shared.setEnabled(newValue, for: event)
+                            }
+                        ))
+                    }
+                }
             }
         }
         .formStyle(.grouped)
