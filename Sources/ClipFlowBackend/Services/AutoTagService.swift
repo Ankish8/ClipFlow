@@ -11,6 +11,8 @@ public struct AutoTagRule: Codable, Identifiable, Sendable {
     public var sourceAppBundleID: String?
     /// Match by content type string (e.g. "link", "image", "text"). Nil = any type.
     public var contentType: String?
+    /// Match if item's display text contains this string (case-insensitive). Nil = no text filter.
+    public var textPattern: String?
     /// Tag to apply when rule matches.
     public var tagId: UUID
 
@@ -20,6 +22,7 @@ public struct AutoTagRule: Codable, Identifiable, Sendable {
         isEnabled: Bool = true,
         sourceAppBundleID: String? = nil,
         contentType: String? = nil,
+        textPattern: String? = nil,
         tagId: UUID
     ) {
         self.id = id
@@ -27,6 +30,7 @@ public struct AutoTagRule: Codable, Identifiable, Sendable {
         self.isEnabled = isEnabled
         self.sourceAppBundleID = sourceAppBundleID
         self.contentType = contentType
+        self.textPattern = textPattern
         self.tagId = tagId
     }
 }
@@ -82,8 +86,11 @@ public class AutoTagService {
             let typeMatch = rule.contentType.map {
                 item.content.contentType == $0
             } ?? true
+            let textMatch = rule.textPattern.map {
+                item.content.displayText.localizedCaseInsensitiveContains($0)
+            } ?? true
 
-            if appMatch && typeMatch {
+            if appMatch && typeMatch && textMatch {
                 matched.insert(rule.tagId)
             }
         }

@@ -86,7 +86,9 @@ class ClipboardViewModel {
         itemIdSet.insert(item.id)
         itemHashSet.insert(item.metadata.hash)
 
-        if items.count > 1000 {
+        let maxItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
+        let limit = maxItems > 0 ? maxItems : 100
+        while items.count > limit {
             let removed = items.removeLast()
             itemIdSet.remove(removed.id)
             itemHashSet.remove(removed.metadata.hash)
@@ -115,9 +117,11 @@ class ClipboardViewModel {
         Task {
             do {
                 isLoading = true
+                let maxItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
+                let historyLimit = maxItems > 0 ? maxItems : 100
                 let history = try await clipboardService.getHistory(
                     offset: 0,
-                    limit: 100,
+                    limit: historyLimit,
                     filter: nil
                 )
 
@@ -386,6 +390,41 @@ class ClipboardViewModel {
     }
 
     // MARK: - Tag Filtering
+
+    /// Whether the current items array was loaded via tag filter (DB-backed).
+    var isTagFiltered = false
+
+    /// Load items matching the given tag IDs directly from the database.
+    /// When `tagIds` is empty, reverts to normal history.
+    func loadItemsByTag(tagIds: Set<UUID>) {
+        guard !tagIds.isEmpty else {
+            if isTagFiltered {
+                isTagFiltered = false
+                loadInitialData()
+            }
+            return
+        }
+        Task {
+            do {
+                isLoading = true
+                var merged: [UUID: ClipboardItem] = [:]
+                for tagId in tagIds {
+                    let tagItems = try await ClipFlowBackend.TagService.shared.getItemsForTag(tagId: tagId)
+                    for item in tagItems {
+                        merged[item.id] = item
+                    }
+                }
+                // Sort newest-first
+                items = merged.values.sorted { $0.timestamps.createdAt > $1.timestamps.createdAt }
+                rebuildSets()
+                isTagFiltered = true
+                isLoading = false
+            } catch {
+                errorMessage = error.localizedDescription
+                isLoading = false
+            }
+        }
+    }
 
     func filteredItems(byTags tagIds: Set<UUID>) -> [ClipboardItem] {
         guard !tagIds.isEmpty else { return items }

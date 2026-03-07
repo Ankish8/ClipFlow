@@ -10,7 +10,7 @@ public protocol ClipboardServiceAPI {
     // MARK: Core Operations
 
     /// Start monitoring clipboard changes
-    func startMonitoring() async throws
+    func startMonitoring(interval: TimeInterval) async throws
 
     /// Stop monitoring clipboard
     func stopMonitoring() async
@@ -79,6 +79,14 @@ public protocol ClipboardServiceAPI {
     var itemUpdates: AnyPublisher<ClipboardItem, Never> { get }
     var errors: AnyPublisher<ClipboardError, Never> { get }
     var statusUpdates: AnyPublisher<MonitorStatus, Never> { get }
+}
+
+// MARK: - Protocol Defaults
+
+extension ClipboardServiceAPI {
+    public func startMonitoring() async throws {
+        try await startMonitoring(interval: 0.15)
+    }
 }
 
 // MARK: - Filter Types

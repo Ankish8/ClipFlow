@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ClipFlowCore
 import ClipFlowBackend
 
@@ -13,16 +14,29 @@ struct AutoTagRulesView: View {
         VStack(spacing: 0) {
             if rules.isEmpty {
                 Spacer()
-                VStack(spacing: 8) {
+                VStack(spacing: 16) {
                     Image(systemName: "tag.square")
-                        .font(.system(size: 32))
+                        .font(.system(size: 40))
                         .foregroundStyle(.secondary)
                     Text("No auto-tag rules yet")
-                        .font(.headline)
-                    Text("Rules automatically tag new clipboard items\nbased on source app or content type.")
-                        .font(.caption)
+                        .font(.title3.weight(.semibold))
+                    Text("Rules automatically tag new clipboard items\nbased on keywords, source app, or content type.")
+                        .font(.body)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Examples")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        RuleSuggestionRow(icon: "link", text: "Tag links — text contains \"https://\"")
+                        RuleSuggestionRow(icon: "key.fill", text: "Flag API keys — text contains \"sk-\"")
+                        RuleSuggestionRow(icon: "photo", text: "Tag all images — content type is Image")
+                        RuleSuggestionRow(icon: "at", text: "Catch emails — text contains \"@\"")
+                        RuleSuggestionRow(icon: "app.dashed", text: "Tag by app — source app is Safari")
+                    }
+                    .padding(12)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
                 }
                 Spacer()
             } else {
@@ -59,7 +73,29 @@ struct AutoTagRulesView: View {
         }
         .onAppear {
             rules = AutoTagService.shared.rules
-            availableTags = TagService.shared.getAllTags()
+            Task {
+                await TagService.shared.loadAllTags()
+                availableTags = TagService.shared.getAllTags()
+            }
+        }
+    }
+}
+
+// MARK: - Rule Suggestion Row
+
+private struct RuleSuggestionRow: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+                .frame(width: 18)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -104,8 +140,10 @@ private struct AutoTagRuleRow: View {
 
     private var subtitle: String {
         var parts: [String] = []
+        if let pattern = rule.textPattern, !pattern.isEmpty {
+            parts.append("Contains: \(pattern)")
+        }
         if let app = rule.sourceAppBundleID {
-            // Show just the app name part of bundle ID for readability
             let name = app.components(separatedBy: ".").last ?? app
             parts.append("App: \(name)")
         }
@@ -116,6 +154,14 @@ private struct AutoTagRuleRow: View {
     }
 }
 
+// MARK: - Known App (for picker)
+
+private struct KnownApp: Identifiable, Hashable {
+    let bundleID: String
+    let name: String
+    var id: String { bundleID }
+}
+
 // MARK: - Add Rule Sheet
 
 private struct AddAutoTagRuleSheet: View {
@@ -124,39 +170,60 @@ private struct AddAutoTagRuleSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
+    @State private var textPattern = ""
     @State private var selectedTagId: UUID?
-    @State private var appBundleID = ""
+    @State private var selectedAppBundleID = ""
     @State private var selectedContentType = ""
+    @State private var knownApps: [KnownApp] = []
+    @State private var loadedTags: [Tag] = []
 
-    private let contentTypes = ["", "text", "richText", "image", "file", "link", "code", "color"]
+    private static let contentTypeLabels: [(value: String, label: String)] = [
+        ("", "Any"),
+        ("text", "Text"),
+        ("richText", "Rich Text"),
+        ("image", "Image"),
+        ("file", "File"),
+        ("link", "Link"),
+        ("code", "Code"),
+        ("color", "Color"),
+    ]
+
+    private var tags: [Tag] { loadedTags.isEmpty ? availableTags : loadedTags }
+    private var canSave: Bool { selectedTagId != nil && !name.isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section("Rule Name") {
-                    TextField("e.g. Tag Safari links", text: $name)
-                }
+                Section("Rule") {
+                    TextField("Name", text: $name, prompt: Text("e.g. Tag API Keys"))
 
-                Section("Match Conditions") {
-                    TextField("Source App Bundle ID (optional)", text: $appBundleID)
-                        .font(.system(.body, design: .monospaced))
-                    Text("e.g. com.apple.Safari, com.microsoft.VSCode")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-
-                    Picker("Content Type", selection: $selectedContentType) {
-                        Text("Any").tag("")
-                        ForEach(contentTypes.dropFirst(), id: \.self) { type in
-                            Text(type.capitalized).tag(type)
+                    if tags.isEmpty {
+                        Text("No tags yet — create one in the overlay")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Tag", selection: $selectedTagId) {
+                            Text("Select a tag…").tag(nil as UUID?)
+                            ForEach(tags) { tag in
+                                Text(tag.name).tag(tag.id as UUID?)
+                            }
                         }
                     }
                 }
 
-                Section("Apply Tag") {
-                    Picker("Tag", selection: $selectedTagId) {
-                        Text("Select a tag...").tag(nil as UUID?)
-                        ForEach(availableTags) { tag in
-                            Text(tag.name).tag(tag.id as UUID?)
+                Section("Conditions") {
+                    TextField("Text contains", text: $textPattern, prompt: Text("keyword or phrase"))
+
+                    Picker("Source App", selection: $selectedAppBundleID) {
+                        Text("Any").tag("")
+                        ForEach(knownApps) { app in
+                            Text(app.name).tag(app.bundleID)
+                        }
+                    }
+
+                    Picker("Content Type", selection: $selectedContentType) {
+                        ForEach(Self.contentTypeLabels, id: \.value) { item in
+                            Text(item.label).tag(item.value)
                         }
                     }
                 }
@@ -170,18 +237,41 @@ private struct AddAutoTagRuleSheet: View {
                     guard let tagId = selectedTagId, !name.isEmpty else { return }
                     let rule = AutoTagRule(
                         name: name,
-                        sourceAppBundleID: appBundleID.isEmpty ? nil : appBundleID,
+                        sourceAppBundleID: selectedAppBundleID.isEmpty ? nil : selectedAppBundleID,
                         contentType: selectedContentType.isEmpty ? nil : selectedContentType,
+                        textPattern: textPattern.isEmpty ? nil : textPattern,
                         tagId: tagId
                     )
                     onSave(rule)
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedTagId == nil || name.isEmpty)
+                .disabled(!canSave)
             }
             .padding()
         }
-        .frame(width: 420, height: 380)
+        .frame(width: 440, height: 380)
+        .onAppear {
+            loadKnownApps()
+            Task {
+                await TagService.shared.loadAllTags()
+                loadedTags = TagService.shared.getAllTags()
+            }
+        }
+    }
+
+    private func loadKnownApps() {
+        var seen = Set<String>()
+        var apps: [KnownApp] = []
+        for runningApp in NSWorkspace.shared.runningApplications {
+            guard let bundleID = runningApp.bundleIdentifier,
+                  let name = runningApp.localizedName,
+                  !seen.contains(bundleID),
+                  runningApp.activationPolicy == .regular
+            else { continue }
+            seen.insert(bundleID)
+            apps.append(KnownApp(bundleID: bundleID, name: name))
+        }
+        knownApps = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }

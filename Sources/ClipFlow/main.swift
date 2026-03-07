@@ -86,9 +86,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func startClipboardMonitoring() async {
         NSLog("🔄 Starting enhanced clipboard monitoring...")
 
+        // Run auto-delete cleanup before starting monitoring
+        let autoDeleteDays = UserDefaults.standard.integer(forKey: "autoDeleteAfterDays")
+        if autoDeleteDays > 0 {
+            do {
+                try await ClipboardService.shared.deleteItemsOlderThan(days: autoDeleteDays)
+            } catch {
+                NSLog("⚠️ Auto-delete cleanup failed: \(error.localizedDescription)")
+            }
+        }
+
         do {
+            // Read polling interval from settings (default 0.15s)
+            let storedInterval = UserDefaults.standard.double(forKey: "pollingInterval")
+            let interval = storedInterval > 0 ? storedInterval : 0.15
+
             // Start clipboard monitoring
-            try await ClipboardService.shared.startMonitoring()
+            try await ClipboardService.shared.startMonitoring(interval: interval)
 
             NSLog("✅ Clipboard monitoring started successfully")
 

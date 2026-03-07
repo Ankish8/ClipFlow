@@ -213,6 +213,12 @@ public class ClipboardMonitorService {
             let persistedItem = try await storageService.saveItem(taggedItem)
             NSLog("💾 Successfully saved item to storage: \(persistedItem.content.contentType)")
 
+            // Enforce max history items limit from settings
+            let maxItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
+            if maxItems > 0 {
+                try? await storageService.enforceMaxItems(max: maxItems)
+            }
+
             // Update statistics
             totalItemsProcessed += 1
             lastDetectionTime = Date()

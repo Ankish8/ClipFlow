@@ -85,10 +85,16 @@ public class ClipboardService: ClipboardServiceAPI {
 
     // MARK: - Core Operations
 
-    public func startMonitoring() async throws {
+    public func startMonitoring(interval: TimeInterval = 0.15) async throws {
         await performanceMonitor.measure(operation: "start_monitoring") {
-            await monitorService.startMonitoring()
+            await monitorService.startMonitoring(interval: interval)
         }
+    }
+
+    /// Stop and restart monitoring with a new polling interval.
+    public func restartMonitoring(interval: TimeInterval) async {
+        await stopMonitoring()
+        try? await startMonitoring(interval: interval)
     }
 
     public func stopMonitoring() async {
@@ -563,6 +569,16 @@ public class ClipboardService: ClipboardServiceAPI {
 
     public func deleteItem(_ itemId: UUID) async throws {
         try await deleteItems(ids: [itemId])
+    }
+
+    /// Delete items older than a given number of days.
+    public func deleteItemsOlderThan(days: Int) async throws {
+        try await storageService.deleteItemsOlderThan(days: days)
+    }
+
+    /// Enforce max history items limit.
+    public func enforceMaxItems(max: Int) async throws {
+        try await storageService.enforceMaxItems(max: max)
     }
 
     /// Replace the content of an existing item and persist to DB. Used by the Edit feature.

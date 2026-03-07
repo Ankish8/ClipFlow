@@ -83,8 +83,12 @@ struct ClipboardCardView: View {
             )
         }
         .onTapGesture(count: 2) {
-            // Double-click to paste and hide overlay
-            pasteAndHideOverlay()
+            // Double-click to paste; Shift+double-click pastes as plain text
+            if NSEvent.modifierFlags.contains(.shift) {
+                pasteAsPlainAndHideOverlay()
+            } else {
+                pasteAndHideOverlay()
+            }
         }
         .contextMenu {
             cardContextMenu
@@ -350,6 +354,16 @@ struct ClipboardCardView: View {
 
             // NOW paste into restored text field
             self.viewModel.pasteItem(self.item)
+        }
+    }
+
+    private func pasteAsPlainAndHideOverlay() {
+        NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+        Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            NSLog("📋 Shift+double-click: pasting as plain text")
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            self.viewModel.pasteItem(self.item, transform: .removeFormatting)
         }
     }
 

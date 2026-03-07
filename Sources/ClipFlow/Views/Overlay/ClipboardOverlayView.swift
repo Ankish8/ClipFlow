@@ -68,11 +68,33 @@ struct ClipboardOverlayView: View {
     @ViewBuilder
     private var overlayContent: some View {
         VStack(spacing: 0) {
-            TagFilterBarView(
-                viewModel: viewModel,
-                selectedTagIds: $selectedTagIds,
-                searchText: $searchText
-            )
+            HStack(spacing: 0) {
+                TagFilterBarView(
+                    viewModel: viewModel,
+                    selectedTagIds: $selectedTagIds,
+                    searchText: $searchText
+                )
+
+                // Settings gear — top-right corner of overlay
+                Button {
+                    // Hide overlay first, then open settings after a brief
+                    // delay so the activation policy switch doesn't race.
+                    NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(200))
+                        SettingsWindowController.shared.showSettings()
+                    }
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
+                .padding(.trailing, 16)
+            }
             .padding(.top, 10)
 
             Spacer().frame(height: 8)
@@ -114,7 +136,8 @@ struct ClipboardOverlayView: View {
                 debouncedSearch = searchText
             }
         }
-        .onChange(of: selectedTagIds) { _, _ in
+        .onChange(of: selectedTagIds) { _, newTagIds in
+            viewModel.loadItemsByTag(tagIds: newTagIds)
             let maxIndex = max(filteredItems.count - 1, 0)
             selectedIndex = min(selectedIndex, maxIndex)
         }

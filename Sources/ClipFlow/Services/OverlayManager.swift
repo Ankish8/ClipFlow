@@ -50,9 +50,31 @@ class OverlayManager: ObservableObject {
     }
 
     private func setupKeyboardShortcuts() {
+        // Check if global hotkey is enabled at startup
+        let enabled = UserDefaults.standard.object(forKey: "enableGlobalHotkey") as? Bool ?? true
+        if !enabled {
+            KeyboardShortcuts.disable(.toggleClipFlowOverlay)
+        }
+
         KeyboardShortcuts.onKeyUp(for: .toggleClipFlowOverlay) { [weak self] in
             // Call directly on main actor - no async Task wrapper for instant response
             self?.toggleOverlay()
+        }
+
+        // Observe setting changes at runtime
+        NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                let isEnabled = UserDefaults.standard.object(forKey: "enableGlobalHotkey") as? Bool ?? true
+                if isEnabled {
+                    KeyboardShortcuts.enable(.toggleClipFlowOverlay)
+                } else {
+                    KeyboardShortcuts.disable(.toggleClipFlowOverlay)
+                }
+            }
         }
     }
 

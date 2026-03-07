@@ -188,6 +188,8 @@ struct TagFilterBarView: View {
         viewModel.performFullTextSearch(query)
     }
 
+
+
     // MARK: - Tag Management
 
     private func renameTag(_ tag: Tag) {

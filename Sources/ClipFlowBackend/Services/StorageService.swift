@@ -273,6 +273,42 @@ public class StorageService {
         }
     }
 
+    // MARK: - History Limits
+
+    /// Delete the oldest non-pinned items beyond `max` count.
+    public func enforceMaxItems(max: Int) async throws {
+        let total = try await getTotalItemCount()
+        guard total > max else { return }
+        let excess = total - max
+        let idStrings = try await databaseManager.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT id FROM clipboard_items
+                WHERE is_deleted = 0 AND is_pinned = 0
+                ORDER BY created_at ASC
+                LIMIT ?
+                """, arguments: [excess])
+        }
+        let ids = idStrings.compactMap { UUID(uuidString: $0) }
+        guard !ids.isEmpty else { return }
+        try await deleteItems(ids: ids, permanent: true)
+        NSLog("🗑️ Enforced max items: deleted \(ids.count) oldest items (limit: \(max))")
+    }
+
+    /// Delete items older than a given number of days. Pinned items are preserved.
+    public func deleteItemsOlderThan(days: Int) async throws {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        let idStrings = try await databaseManager.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT id FROM clipboard_items
+                WHERE is_deleted = 0 AND is_pinned = 0 AND created_at < ?
+                """, arguments: [cutoff])
+        }
+        let ids = idStrings.compactMap { UUID(uuidString: $0) }
+        guard !ids.isEmpty else { return }
+        try await deleteItems(ids: ids, permanent: true)
+        NSLog("🗑️ Auto-deleted \(ids.count) items older than \(days) days")
+    }
+
     // MARK: - Maintenance Operations
 
     public func cleanup() async throws {

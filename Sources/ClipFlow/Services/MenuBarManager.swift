@@ -72,6 +72,11 @@ final class MenuBarManager: NSObject, ObservableObject {
                 NSLog("📡 MenuBar received clipboard update: \(item.content.contentType)")
                 Task { @MainActor in
                     await self?.updateRecentItems(with: item)
+
+                    // Play feedback sound if enabled
+                    if UserDefaults.standard.bool(forKey: "enableSounds") {
+                        NSSound(named: "Tink")?.play()
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -196,8 +201,7 @@ final class MenuBarManager: NSObject, ObservableObject {
     }
 
     @objc private func showPreferences() {
-        // Open the Settings window defined in main.swift
-        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        SettingsWindowController.shared.showSettings()
     }
 
     @objc private func showAbout() {
