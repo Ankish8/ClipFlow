@@ -204,8 +204,6 @@ struct ClipboardCardView: View {
 
     private var cardHeader: some View {
         HStack {
-            let currentItem = liveItem
-
             // Badge shows custom name when set, otherwise content type
             let badgeLabel = viewModel.customName(for: item.id)?.uppercased()
                 ?? contentTypeInfo.name.uppercased()
@@ -216,19 +214,6 @@ struct ClipboardCardView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(.quaternary, in: .rect(corners: .concentric(minimum: 4), isUniform: true))
-
-            // Pin button — shown when pinned or hovering.
-            if currentItem.isPinned || isHoveringHeader {
-                HeaderIconButton(
-                    icon: currentItem.isPinned ? "pin.fill" : "pin",
-                    activeColor: currentItem.isPinned ? .white : .secondary,
-                    rotation: currentItem.isPinned ? 45 : 0
-                ) {
-                    viewModel.setPinned(!currentItem.isPinned, for: currentItem)
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                .animation(.easeInOut(duration: 0.15), value: isHoveringHeader)
-            }
 
             Spacer()
 
