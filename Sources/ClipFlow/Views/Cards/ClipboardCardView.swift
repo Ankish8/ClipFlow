@@ -61,11 +61,10 @@ struct ClipboardCardView: View {
         }
         .frame(width: cardWidth, height: 250)
         .containerShape(.rect(cornerRadius: 20))
-        .glassEffect(
-            primaryTagColor == nil
-                ? .regular.interactive()
-                : .regular.tint(primaryTagColor!.opacity(0.12)).interactive(),
-            in: .rect(cornerRadius: 20)
+        .clipboardCardChrome(
+            cornerRadius: 20,
+            tint: primaryTagColor,
+            isSelected: isSelected
         )
         .animation(.easeInOut(duration: 0.2), value: isSelected)
         .overlay {

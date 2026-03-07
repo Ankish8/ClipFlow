@@ -148,7 +148,9 @@ class ClipboardOverlayWindow: NSPanel {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
-        let overlayHeight: CGFloat = 320 // top (10) + tag bar (40) + gap (8) + cards (252) + bottom (10) = 320
+        // Give the rounded panel a little breathing room inside the borderless
+        // window so the outer corners and top edge don't get visually clipped.
+        let overlayHeight: CGFloat = 340
         let horizontalMargin: CGFloat = 8  // Gap from left/right screen edges
         let bottomMargin: CGFloat = 8      // Gap above the dock (matches horizontal margin)
 
