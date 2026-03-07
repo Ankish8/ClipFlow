@@ -10,6 +10,8 @@ struct ClipboardCardView: View {
     let isSelected: Bool
     let viewModel: ClipboardViewModel
     var onSelect: (() -> Void)? = nil
+    var onShiftSelect: ((Int) -> Void)? = nil
+    var selectedItems: [ClipboardItem] = []
     private let contentTypeInfo: ContentTypeInfo
 
     @State private var cachedImagePath: String? = nil
@@ -42,12 +44,16 @@ struct ClipboardCardView: View {
          index: Int,
          isSelected: Bool,
          viewModel: ClipboardViewModel,
-         onSelect: (() -> Void)? = nil) {
+         onSelect: (() -> Void)? = nil,
+         onShiftSelect: ((Int) -> Void)? = nil,
+         selectedItems: [ClipboardItem] = []) {
         self.item = item
         self.index = index
         self.isSelected = isSelected
         self.viewModel = viewModel
         self.onSelect = onSelect
+        self.onShiftSelect = onShiftSelect
+        self.selectedItems = selectedItems
         self.contentTypeInfo = ContentTypeInfo.from(item.content)
     }
 
@@ -72,6 +78,12 @@ struct ClipboardCardView: View {
         )
         .animation(.easeInOut(duration: 0.2), value: isSelected)
         .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 3)
+            }
+        }
+        .overlay {
             // AppKit drag overlay for ALL card types.
             // SwiftUI .onDrag uses lazy NSItemProvider closures and does not fire
             // reliably from non-activating NSPanels. AppKit beginDraggingSession
@@ -79,16 +91,18 @@ struct ClipboardCardView: View {
             // (required by Chrome), and registers the UUID for tag-chip drops.
             AppKitCardDragOverlay(
                 item: item,
+                cardIndex: index - 1,
                 nsImage: cachedNSImage,
                 fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) },
                 dragThumbnail: dragThumbnail,
+                selectedItems: selectedItems,
+                onSelect: onSelect,
+                onShiftSelect: onShiftSelect,
                 isHoveringHeader: $isHoveringHeader
             )
         }
-        .onTapGesture {
-            // Single tap selects — fires instantly with no double-tap disambiguation delay
-            onSelect?()
-        }
+        // Single tap selects via CardDragView.mouseDown — fires instantly with no
+        // double-tap disambiguation delay AND detects Shift for multi-select.
         .contextMenu {
             cardContextMenu
         }
@@ -1102,9 +1116,13 @@ class DragSourceView: NSView {
 /// pasteboard types at `draggingEntered:`, before any lazy closures run.
 private struct AppKitCardDragOverlay: NSViewRepresentable {
     let item: ClipboardItem
+    let cardIndex: Int
     let nsImage: NSImage?       // Pre-decoded image; nil for non-image cards
     let fileURL: URL?           // Pre-written temp file; nil for non-image cards
     let dragThumbnail: NSImage? // Full card snapshot via ImageRenderer
+    let selectedItems: [ClipboardItem]
+    var onSelect: (() -> Void)?
+    var onShiftSelect: ((Int) -> Void)?
     @Binding var isHoveringHeader: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -1112,6 +1130,9 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
     func makeNSView(context: Context) -> CardDragView {
         let v = CardDragView()
         v.coordinator = context.coordinator
+        v.cardIndex = cardIndex
+        v.onSelect = onSelect
+        v.onShiftSelect = onShiftSelect
         v.onHeaderHoverChanged = { hovering in
             // mouseMoved is already on the main thread — update binding synchronously.
             // No DispatchQueue.main.async: that would queue one task per mouse frame
@@ -1124,6 +1145,9 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
     func updateNSView(_ v: CardDragView, context: Context) {
         context.coordinator.parent = self
+        v.cardIndex = cardIndex
+        v.onSelect = onSelect
+        v.onShiftSelect = onShiftSelect
         v.onHeaderHoverChanged = { hovering in
             context.coordinator.parent.isHoveringHeader = hovering
         }
@@ -1164,10 +1188,13 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             TagDropCoordinator.shared.hoveredTagId = newTagId
         }
 
-        /// Called when the drag session ends. If a tag is hovered, apply it.
+        /// Called when the drag session ends. If a tag is hovered, apply it to all selected items.
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             if let tagId = TagDropCoordinator.shared.hoveredTagId {
-                TagDropCoordinator.shared.onTagApplied?(parent.item.id, tagId)
+                let items = parent.selectedItems.isEmpty ? [parent.item] : parent.selectedItems
+                for draggedItem in items {
+                    TagDropCoordinator.shared.onTagApplied?(draggedItem.id, tagId)
+                }
                 NSCursor.pop()  // Restore cursor after drop on tag
             }
             TagDragSessionState.isDraggingCard = false
@@ -1180,6 +1207,9 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
     final class CardDragView: DragSourceView {
         var coordinator: Coordinator?
         var onHeaderHoverChanged: ((Bool) -> Void)?
+        var cardIndex: Int = 0
+        var onSelect: (() -> Void)?
+        var onShiftSelect: ((Int) -> Void)?
         private var mouseDownPoint: NSPoint = .zero
         private var dragStarted = false
 
@@ -1261,18 +1291,21 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             coord.parent.isHoveringHeader = false
             let curP  = convert(event.locationInWindow, from: nil)
             let startP = convert(windowStartPoint, from: nil)
-            let pbItem = buildPasteboardItem(for: coord.parent)
             let thumbnail = coord.parent.dragThumbnail ?? coord.parent.nsImage ?? blankThumbnail()
-            let dragItem = NSDraggingItem(pasteboardWriter: pbItem)
-            dragItem.setDraggingFrame(
-                CGRect(x: curP.x - startP.x, y: curP.y - startP.y, width: 235, height: 250),
-                contents: thumbnail)
-            beginDraggingSession(with: [dragItem], event: event, source: coord)
+            let origin = CGPoint(x: curP.x - startP.x, y: curP.y - startP.y)
+            let draggingItems = buildDraggingItems(for: coord.parent, at: origin, thumbnail: thumbnail)
+            beginDraggingSession(with: draggingItems, event: event, source: coord)
         }
 
         override func mouseDown(with event: NSEvent) {
             mouseDownPoint = convert(event.locationInWindow, from: nil)
             dragStarted = false
+            if event.modifierFlags.contains(.shift) {
+                // Shift+click extends selection — handled via notification
+                onShiftSelect?(cardIndex)
+                return  // Don't forward to SwiftUI tap gesture (would reset to single-select)
+            }
+            onSelect?()
             super.mouseDown(with: event)   // forward so SwiftUI tap gestures still fire
         }
 
@@ -1293,22 +1326,14 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             // hover UI so the pin button cannot steal follow-up mouse handling.
             coord.parent.isHoveringHeader = false
 
-            let pbItem = buildPasteboardItem(for: coord.parent)
             // Use the pre-rendered full-card thumbnail; fall back to image or blank
             let thumbnail = coord.parent.dragThumbnail
                 ?? coord.parent.nsImage
                 ?? blankThumbnail()
 
-            // Size matches the actual card; offset so the click point stays under cursor
-            let cardW: CGFloat = 235
-            let cardH: CGFloat = 250
-            let dragItem = NSDraggingItem(pasteboardWriter: pbItem)
-            dragItem.setDraggingFrame(
-                CGRect(x: p.x - mouseDownPoint.x,
-                       y: p.y - mouseDownPoint.y,
-                       width: cardW, height: cardH),
-                contents: thumbnail)
-            beginDraggingSession(with: [dragItem], event: event, source: coord)
+            let origin = CGPoint(x: p.x - mouseDownPoint.x, y: p.y - mouseDownPoint.y)
+            let draggingItems = buildDraggingItems(for: coord.parent, at: origin, thumbnail: thumbnail)
+            beginDraggingSession(with: draggingItems, event: event, source: coord)
         }
 
         override func mouseUp(with event: NSEvent) {
@@ -1379,9 +1404,30 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         // MARK: Pasteboard Builder
 
-        private func buildPasteboardItem(for overlay: AppKitCardDragOverlay) -> NSPasteboardItem {
+        /// Builds dragging items for all selected items (or just the primary one).
+        /// Each item gets its own NSDraggingItem with cascading frame offsets.
+        private func buildDraggingItems(for overlay: AppKitCardDragOverlay, at origin: CGPoint, thumbnail: NSImage) -> [NSDraggingItem] {
+            let items = overlay.selectedItems.count > 1 ? overlay.selectedItems : [overlay.item]
+            let cardW: CGFloat = 235
+            let cardH: CGFloat = 250
+            var draggingItems: [NSDraggingItem] = []
+
+            for (i, clipItem) in items.enumerated() {
+                let pbItem = buildPasteboardItem(for: clipItem, overlay: overlay)
+                let dragItem = NSDraggingItem(pasteboardWriter: pbItem)
+                let offset = CGFloat(i) * 8
+                dragItem.setDraggingFrame(
+                    CGRect(x: origin.x + offset, y: origin.y - offset,
+                           width: cardW, height: cardH),
+                    contents: i == 0 ? thumbnail : blankThumbnail())
+                draggingItems.append(dragItem)
+            }
+            return draggingItems
+        }
+
+        private func buildPasteboardItem(for clipItem: ClipboardItem, overlay: AppKitCardDragOverlay) -> NSPasteboardItem {
             let pbItem = NSPasteboardItem()
-            let item = overlay.item
+            let item = clipItem
 
             // UUID — ClipFlow's internal type checked by TagChipView.onDrop (always)
             if let data = item.id.uuidString.data(using: .utf8) {
@@ -1399,7 +1445,9 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
                     forType: ClipboardCardView.imagePasteboardType(for: imageContent.format)
                 )
 
-                let dragImage = overlay.nsImage ?? NSImage(data: imageContent.data)
+                // Use cached NSImage only for the primary item; others decode from data
+                let dragImage = (clipItem.id == overlay.item.id ? overlay.nsImage : nil)
+                    ?? NSImage(data: imageContent.data)
 
                 // TIFF + legacy string — Chrome checks "NeXT TIFF v4.0 pasteboard type"
                 if let tiffData = dragImage?.tiffRepresentation {
@@ -1409,7 +1457,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
                 // File URL + legacy filenames — Finder needs both. Fall back to
                 // creating the temp file synchronously if the warm-up race lost.
-                let fileURL = overlay.fileURL ?? {
+                let fileURL = (clipItem.id == overlay.item.id ? overlay.fileURL : nil) ?? {
                     do {
                         return try ClipboardCardView.temporaryImageFileURL(
                             itemID: item.id,

@@ -249,12 +249,17 @@ class ClipboardOverlayWindow: NSPanel {
         // Must use notifications (not direct struct method calls) because @State
         // lives in SwiftUI's storage, not on the stored struct copy.
         if event.type == .keyDown {
+            let isShift = event.modifierFlags.contains(.shift)
             switch event.keyCode {
             case 123: // Left arrow
-                NotificationCenter.default.post(name: .navigateOverlayLeft, object: nil)
+                NotificationCenter.default.post(
+                    name: isShift ? .navigateOverlayLeftExtend : .navigateOverlayLeft,
+                    object: nil)
                 return
             case 124: // Right arrow
-                NotificationCenter.default.post(name: .navigateOverlayRight, object: nil)
+                NotificationCenter.default.post(
+                    name: isShift ? .navigateOverlayRightExtend : .navigateOverlayRight,
+                    object: nil)
                 return
             default:
                 break
@@ -345,10 +350,18 @@ class ClipboardOverlayWindow: NSPanel {
             }
 
         case 123: // Left arrow
-            overlayView.navigateLeft()
+            if event.modifierFlags.contains(.shift) {
+                NotificationCenter.default.post(name: .navigateOverlayLeftExtend, object: nil)
+            } else {
+                overlayView.navigateLeft()
+            }
 
         case 124: // Right arrow
-            overlayView.navigateRight()
+            if event.modifierFlags.contains(.shift) {
+                NotificationCenter.default.post(name: .navigateOverlayRightExtend, object: nil)
+            } else {
+                overlayView.navigateRight()
+            }
 
         case 18...26: // Number keys 1-9
             let number = Int(event.keyCode) - 17 // Convert keycode to number (1-9)

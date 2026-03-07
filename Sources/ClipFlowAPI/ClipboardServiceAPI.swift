@@ -28,6 +28,9 @@ public protocol ClipboardServiceAPI {
     func paste(_ item: ClipboardItem,
                transform: TransformAction?) async throws
 
+    /// Paste multiple items at once (images as file URLs, text concatenated)
+    func pasteMultiple(_ items: [ClipboardItem]) async throws
+
     // MARK: History Management
 
     /// Fetch clipboard history with pagination

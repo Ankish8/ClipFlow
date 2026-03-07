@@ -336,6 +336,7 @@ private struct StorageSettingsPage: View {
                         step: 1
                     )
                     .tint(.purple)
+                    .padding(.horizontal, 4)
 
                     HStack {
                         ForEach(Array(historyOptions.enumerated()), id: \.offset) { _, option in

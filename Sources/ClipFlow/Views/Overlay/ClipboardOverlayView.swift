@@ -4,6 +4,8 @@ import ClipFlowCore
 struct ClipboardOverlayView: View {
     let viewModel: ClipboardViewModel
     @State private var selectedIndex: Int = 0
+    @State private var selectionAnchor: Int = 0
+    @State private var selectedIndices: Set<Int> = [0]
     @State private var selectedTagIds: Set<UUID> = []
 
     // Quick Look state
@@ -153,16 +155,46 @@ struct ClipboardOverlayView: View {
             viewModel.loadItemsByTag(tagIds: newTagIds)
             let maxIndex = max(filteredItems.count - 1, 0)
             selectedIndex = min(selectedIndex, maxIndex)
+            selectionAnchor = selectedIndex
+            selectedIndices = [selectedIndex]
         }
         .onChange(of: debouncedSearch) { _, _ in
             let maxIndex = max(filteredItems.count - 1, 0)
             selectedIndex = min(selectedIndex, maxIndex)
+            selectionAnchor = selectedIndex
+            selectedIndices = [selectedIndex]
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayLeft)) { _ in
-            if selectedIndex > 0 { selectedIndex -= 1 }
+            if selectedIndex > 0 {
+                selectedIndex -= 1
+                selectionAnchor = selectedIndex
+                selectedIndices = [selectedIndex]
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayRight)) { _ in
-            if selectedIndex < filteredItems.count - 1 { selectedIndex += 1 }
+            if selectedIndex < filteredItems.count - 1 {
+                selectedIndex += 1
+                selectionAnchor = selectedIndex
+                selectedIndices = [selectedIndex]
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayLeftExtend)) { _ in
+            if selectedIndex > 0 {
+                selectedIndex -= 1
+                selectedIndices = rangeSet(from: selectionAnchor, to: selectedIndex)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayRightExtend)) { _ in
+            if selectedIndex < filteredItems.count - 1 {
+                selectedIndex += 1
+                selectedIndices = rangeSet(from: selectionAnchor, to: selectedIndex)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cardTappedWithShift)) { note in
+            if let index = note.userInfo?["index"] as? Int {
+                selectedIndex = index
+                selectedIndices = rangeSet(from: selectionAnchor, to: index)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleQuickLook)) { _ in
             let items = filteredItems
@@ -186,6 +218,9 @@ struct ClipboardOverlayView: View {
 
     private var cardStack: some View {
         let items = Array(filteredItems.enumerated())
+        let selectedItemsList = selectedIndices.sorted().compactMap { idx in
+            idx < filteredItems.count ? filteredItems[idx] : nil
+        }
         return LazyHStack(spacing: 16) {
             if items.count <= 6 {
                 Spacer().frame(minWidth: 0)
@@ -194,9 +229,18 @@ struct ClipboardOverlayView: View {
                 ClipboardCardView(
                     item: item,
                     index: index + 1,
-                    isSelected: index == selectedIndex,
+                    isSelected: selectedIndices.contains(index),
                     viewModel: viewModel,
-                    onSelect: { selectedIndex = index }
+                    onSelect: {
+                        selectedIndex = index
+                        selectionAnchor = index
+                        selectedIndices = [index]
+                    },
+                    onShiftSelect: { shiftIndex in
+                        selectedIndex = shiftIndex
+                        selectedIndices = rangeSet(from: selectionAnchor, to: shiftIndex)
+                    },
+                    selectedItems: selectedItemsList
                 )
                 .id(item.id)
             }
@@ -229,28 +273,58 @@ struct ClipboardOverlayView: View {
         }
     }
 
+    // MARK: - Selection Helpers
+
+    private func rangeSet(from a: Int, to b: Int) -> Set<Int> {
+        Set(min(a, b)...max(a, b))
+    }
+
     // MARK: - Keyboard Navigation Methods
 
     func navigateLeft() {
-        if selectedIndex > 0 { selectedIndex -= 1 }
+        if selectedIndex > 0 {
+            selectedIndex -= 1
+            selectionAnchor = selectedIndex
+            selectedIndices = [selectedIndex]
+        }
     }
 
     func navigateRight() {
         let count = filteredItems.count
-        if selectedIndex < count - 1 { selectedIndex += 1 }
+        if selectedIndex < count - 1 {
+            selectedIndex += 1
+            selectionAnchor = selectedIndex
+            selectedIndices = [selectedIndex]
+        }
     }
 
     func selectByNumber(_ number: Int) {
         let index = number - 1
         if index >= 0 && index < filteredItems.count {
             selectedIndex = index
+            selectionAnchor = index
+            selectedIndices = [index]
         }
     }
 
     func pasteCurrentSelection() {
         let items = filteredItems
-        guard selectedIndex < items.count else { return }
-        selectAndPaste(items[selectedIndex], index: selectedIndex)
+        if selectedIndices.count > 1 {
+            // Multi-paste: writes images as temp file URLs (for Finder),
+            // text as concatenated string, then simulates ⌘V.
+            let selectedItems = selectedIndices.sorted().compactMap { idx in
+                idx < items.count ? items[idx] : nil
+            }
+            guard !selectedItems.isEmpty else { return }
+            viewModel.pasteMultipleItems(selectedItems)
+            Task {
+                try? await Task.sleep(for: .milliseconds(100))
+                NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+            }
+        } else {
+            guard selectedIndex < items.count else { return }
+            selectAndPaste(items[selectedIndex], index: selectedIndex)
+        }
     }
 
     /// Paste current selection with formatting stripped (Shift+Return shortcut).
@@ -283,10 +357,24 @@ struct ClipboardOverlayView: View {
 
     func deleteCurrentSelection() {
         let items = filteredItems
-        guard selectedIndex < items.count else { return }
-        viewModel.deleteItem(items[selectedIndex])
-        if selectedIndex >= filteredItems.count && selectedIndex > 0 {
-            selectedIndex -= 1
+        if selectedIndices.count > 1 {
+            // Delete all selected items (reverse order to preserve indices)
+            for idx in selectedIndices.sorted().reversed() {
+                guard idx < items.count else { continue }
+                viewModel.deleteItem(items[idx])
+            }
+            let newIndex = max(0, (selectedIndices.min() ?? 0))
+            selectedIndex = min(newIndex, max(filteredItems.count - 1, 0))
+            selectionAnchor = selectedIndex
+            selectedIndices = [selectedIndex]
+        } else {
+            guard selectedIndex < items.count else { return }
+            viewModel.deleteItem(items[selectedIndex])
+            if selectedIndex >= filteredItems.count && selectedIndex > 0 {
+                selectedIndex -= 1
+            }
+            selectionAnchor = selectedIndex
+            selectedIndices = [selectedIndex]
         }
     }
 }
@@ -335,6 +423,9 @@ extension Notification.Name {
     static let hideQuickLookPanel = Notification.Name("hideQuickLookPanel")
     static let navigateOverlayLeft = Notification.Name("navigateOverlayLeft")
     static let navigateOverlayRight = Notification.Name("navigateOverlayRight")
+    static let navigateOverlayLeftExtend = Notification.Name("navigateOverlayLeftExtend")
+    static let navigateOverlayRightExtend = Notification.Name("navigateOverlayRightExtend")
+    static let cardTappedWithShift = Notification.Name("cardTappedWithShift")
 }
 
 extension NSApplication {

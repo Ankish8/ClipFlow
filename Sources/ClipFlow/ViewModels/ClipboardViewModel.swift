@@ -200,6 +200,16 @@ class ClipboardViewModel {
         }
     }
 
+    func pasteMultipleItems(_ items: [ClipboardItem]) {
+        Task {
+            do {
+                try await clipboardService.pasteMultiple(items)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
 
     // MARK: - Search and Filtering
 

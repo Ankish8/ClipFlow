@@ -272,6 +272,85 @@ public class ClipboardService: ClipboardServiceAPI {
         }
     }
 
+    /// Paste multiple items at once. For images, writes temp file URLs so Finder
+    /// receives all files. For text/code/links, concatenates with newlines.
+    public func pasteMultiple(_ items: [ClipboardItem]) async throws {
+        guard !items.isEmpty else { return }
+
+        // Pause monitoring to prevent self-duplication
+        monitorService.pauseMonitoring()
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        // Collect file URLs (images → temp files, files → original URLs)
+        var fileURLs: [URL] = []
+        var textParts: [String] = []
+
+        for item in items {
+            switch item.content {
+            case .image(let imageContent):
+                let tempDir = FileManager.default.temporaryDirectory
+                let tempURL = tempDir.appendingPathComponent("\(item.id.uuidString).\(imageContent.format.rawValue)")
+                try? imageContent.data.write(to: tempURL, options: .atomic)
+                fileURLs.append(tempURL)
+
+            case .file(let fileContent):
+                fileURLs.append(contentsOf: fileContent.urls)
+
+            case .text(let c):
+                textParts.append(c.plainText)
+            case .richText(let c):
+                textParts.append(c.plainTextFallback)
+            case .code(let c):
+                textParts.append(c.code)
+            case .link(let c):
+                textParts.append(c.url.absoluteString)
+            case .color(let c):
+                textParts.append(c.hexValue)
+            case .snippet(let c):
+                textParts.append(c.content)
+            case .multiple(let c):
+                for sub in c.items {
+                    if case .text(let tc) = sub {
+                        textParts.append(tc.plainText)
+                        break
+                    }
+                }
+            }
+        }
+
+        // Write to pasteboard: file URLs take priority (Finder needs them)
+        if !fileURLs.isEmpty {
+            pasteboard.writeObjects(fileURLs as [NSURL])
+            // Also add text if any, as secondary type
+            if !textParts.isEmpty {
+                pasteboard.addTypes([.string], owner: nil)
+                pasteboard.setString(textParts.joined(separator: "\n"), forType: .string)
+            }
+        } else if !textParts.isEmpty {
+            pasteboard.setString(textParts.joined(separator: "\n"), forType: .string)
+        }
+
+        // Wait for clipboard write to propagate
+        try? await Task.sleep(for: .milliseconds(50))
+
+        // Simulate ⌘V
+        await MainActor.run {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            source?.setLocalEventsFilterDuringSuppressionState(
+                [.permitLocalMouseEvents, .permitSystemDefinedEvents],
+                state: .eventSuppressionStateSuppressionInterval
+            )
+            let pasteKeyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
+            let pasteKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+            pasteKeyDown?.flags = .maskCommand
+            pasteKeyUp?.flags = .maskCommand
+            pasteKeyDown?.post(tap: .cgSessionEventTap)
+            pasteKeyUp?.post(tap: .cgSessionEventTap)
+        }
+    }
+
     // MARK: - History Management
 
     public func getHistory(
