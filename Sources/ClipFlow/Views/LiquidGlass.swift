@@ -17,8 +17,9 @@ extension View {
 
     /// Full-surface Liquid Glass panel.
     /// Drives live compositing via SwiftUI's Metal render pass — no key-window required.
+    /// Tinted darker in dark mode for better card contrast; frosted in light mode.
     func overlayPanel(cornerRadius: CGFloat = 32) -> some View {
-        self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        modifier(OverlayPanelModifier(cornerRadius: cornerRadius))
     }
 
     /// Subtle card chrome that keeps cards readable against the overlay surface.
@@ -93,6 +94,26 @@ extension ButtonStyle where Self == ToolbarChipButtonStyle {
         forceHover: Bool = false
     ) -> ToolbarChipButtonStyle {
         .init(isSelected: isSelected, tintColor: tint, forceHover: forceHover)
+    }
+}
+
+private struct OverlayPanelModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .glassEffect(panelGlass, in: .rect(cornerRadius: cornerRadius))
+    }
+
+    private var panelGlass: Glass {
+        if colorScheme == .dark {
+            // Heavy black tint to suppress wallpaper bleed-through
+            return .regular.tint(Color.black.opacity(0.7))
+        } else {
+            // Light mode: strong white frost for a clean, bright panel
+            return .regular.tint(Color.white.opacity(0.4))
+        }
     }
 }
 

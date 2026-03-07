@@ -61,12 +61,18 @@ class ClipboardViewModel {
 
     private func handleNewItem(_ item: ClipboardItem) {
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
-            // Known item (pin/unpin, edit, favorite, etc.) — update in-place so
-            // its position is preserved. filteredItems' sort will move it if needed.
-            items[idx] = item
-            reconcilePreferredTint(for: item)
-            itemHashSet.insert(item.metadata.hash)
-            return
+            let existing = items[idx]
+            // If the timestamp changed, this is a re-copy (duplicate bumped to top).
+            // Remove from old position and fall through to insert at front.
+            if existing.timestamps.createdAt != item.timestamps.createdAt {
+                items.remove(at: idx)
+            } else {
+                // Same timestamp — in-place update (pin/edit/favorite/tag change).
+                items[idx] = item
+                reconcilePreferredTint(for: item)
+                itemHashSet.insert(item.metadata.hash)
+                return
+            }
         }
 
         if itemHashSet.contains(item.metadata.hash) {
@@ -483,6 +489,36 @@ class ClipboardViewModel {
         let newContent = ClipboardContent.link(
             LinkContent(url: newURL, title: newTitle, description: old.description,
                         faviconData: old.faviconData, previewImageData: old.previewImageData)
+        )
+        let updated = ClipboardItem(
+            id: item.id, content: newContent,
+            metadata: ItemMetadata.generate(for: newContent),
+            source: item.source, timestamps: item.timestamps,
+            security: item.security, collectionIds: item.collectionIds,
+            tagIds: item.tagIds, isFavorite: item.isFavorite,
+            isPinned: item.isPinned, isDeleted: item.isDeleted
+        )
+        Task {
+            do {
+                try await clipboardService.updateItemContent(updated)
+                if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                    items[idx] = updated
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Update a link item's metadata (title, description, favicon) after enrichment.
+    func updateLinkMetadata(_ item: ClipboardItem, title: String?, description: String?, faviconData: Data?, previewImageData: Data? = nil) {
+        guard case .link(let old) = item.content else { return }
+        let newContent = ClipboardContent.link(
+            LinkContent(url: old.url,
+                        title: title ?? old.title,
+                        description: description ?? old.description,
+                        faviconData: faviconData ?? old.faviconData,
+                        previewImageData: previewImageData ?? old.previewImageData)
         )
         let updated = ClipboardItem(
             id: item.id, content: newContent,

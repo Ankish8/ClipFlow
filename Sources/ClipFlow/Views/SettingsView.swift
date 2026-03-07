@@ -32,12 +32,17 @@ struct SettingsView: View {
                 Label("Advanced", systemImage: "slider.horizontal.3")
             }
 
+            AutoTagRulesView()
+                .tabItem {
+                    Label("Rules", systemImage: "tag.square")
+                }
+
             AboutSettingsView()
                 .tabItem {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 500, height: 400)
+        .frame(width: 540, height: 480)
     }
 }
 
@@ -107,6 +112,10 @@ struct AdvancedSettingsView: View {
     @Binding var enableGlobalHotkey: Bool
     @Binding var autoDeleteAfterDays: Int
 
+    @State private var itemCount: Int?
+    @State private var storageStats: StorageStatistics?
+    @State private var isLoadingStats = false
+
     var body: some View {
         Form {
             Section {
@@ -149,8 +158,41 @@ struct AdvancedSettingsView: View {
             } header: {
                 Text("Storage")
             }
+
+            Section {
+                if isLoadingStats {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading...")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                } else if let stats = storageStats {
+                    StorageStatRow(label: "Total Items", value: "\(itemCount ?? 0)")
+                    StorageStatRow(label: "Database Size", value: formatBytes(stats.databaseSizeBytes))
+                    StorageStatRow(label: "Large Content", value: formatBytes(stats.largeContentSizeBytes))
+                    StorageStatRow(label: "Total Storage", value: formatBytes(stats.totalStorageBytes))
+                    StorageStatRow(label: "Cache Hit Rate", value: "\(Int(stats.cacheStats.hitRate * 100))%")
+                    StorageStatRow(label: "Cached Items", value: "\(stats.cacheStats.itemCount)")
+                }
+            } header: {
+                Text("Storage Statistics")
+            }
         }
         .padding()
+        .task {
+            isLoadingStats = true
+            do {
+                let info = try await ClipboardService.shared.getStorageInfo()
+                itemCount = info.count
+                storageStats = info.stats
+            } catch {
+                // Stats are non-critical — just show nothing
+            }
+            isLoadingStats = false
+        }
     }
 
     private func revealDataFolder() {
@@ -170,6 +212,34 @@ struct AdvancedSettingsView: View {
             } catch {
                 print("Failed to clear data: \(error)")
             }
+        }
+    }
+
+    private static let byteFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        f.countStyle = .file
+        return f
+    }()
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        Self.byteFormatter.string(fromByteCount: bytes)
+    }
+}
+
+// MARK: - Storage Stat Row
+
+private struct StorageStatRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Text(value)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
     }
 }

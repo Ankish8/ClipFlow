@@ -247,31 +247,119 @@ struct FilePreviewCard: View {
 // MARK: - Link Preview Card
 struct LinkPreviewCard: View {
     let content: LinkContent
+    @State private var faviconImage: Image?
+    @State private var previewImage: Image?
+
+    private var hasTitle: Bool {
+        if let title = content.title, !title.isEmpty, title != content.url.absoluteString {
+            return true
+        }
+        return false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // URL or page title — full width, no icon
-            if let title = content.title, !title.isEmpty {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(5)
-            } else {
-                Text(content.url.absoluteString)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.primary)
-                    .lineLimit(6)
-            }
+            if let preview = previewImage {
+                // OG preview image — fills available space, text pinned at bottom
+                preview
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            // Domain as subtle secondary label
-            if let host = content.url.host {
-                Text(host)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                // Title + domain below image — compact, won't overflow
+                if let title = content.title, !title.isEmpty, title != content.url.absoluteString {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 5) {
+                    if let favicon = faviconImage {
+                        favicon
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 14, height: 14)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                    if let host = content.url.host {
+                        Text(host)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            } else {
+                // No preview image — text-based layout
+                if let title = content.title, !title.isEmpty, title != content.url.absoluteString {
+                    Text(title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(4)
+                } else {
+                    Text(content.url.absoluteString)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .lineLimit(4)
+                }
+
+                HStack(spacing: 5) {
+                    if let favicon = faviconImage {
+                        favicon
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 14, height: 14)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                    if let host = content.url.host {
+                        Text(host)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.top, 2)
+
+                if let desc = content.description, !desc.isEmpty {
+                    Text(desc)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .padding(.top, 2)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: content.url) {
+            // Decode favicon and preview image in parallel, off main thread
+            let favData = content.faviconData
+            let prevData = content.previewImageData
+
+            let results: (fav: Image?, prev: Image?) = await Task.detached(priority: .utility) {
+                let fav: Image? = {
+                    guard let data = favData,
+                          let ns = NSImage(data: data),
+                          let cg = ns.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                    else { return nil }
+                    return Image(cg, scale: 1.0, label: Text(""))
+                }()
+                let prev: Image? = {
+                    guard let data = prevData,
+                          let ns = NSImage(data: data),
+                          let cg = ns.cgImage(forProposedRect: nil, context: nil, hints: nil)
+                    else { return nil }
+                    // Use scale 1.0 — OG images are web-resolution, not Retina
+                    return Image(cg, scale: 1.0, label: Text(""))
+                }()
+                return (fav, prev)
+            }.value
+
+            faviconImage = results.fav
+            previewImage = results.prev
+        }
     }
 }
 

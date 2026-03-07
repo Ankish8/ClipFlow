@@ -21,6 +21,7 @@ struct ClipboardCardView: View {
     // @State would be lost when the card view is recreated after overlay hides.
     private static var editWindowStore:    [UUID: NSWindow] = [:]
     private static var previewWindowStore: [UUID: NSWindow] = [:]
+    private static var ocrWindowStore:     [UUID: NSWindow] = [:]
     @State private var isHoveringHeader = false
 
     // PERFORMANCE: Cache time-ago string — RelativeDateTimeFormatter + Date() is non-trivial
@@ -481,6 +482,21 @@ struct ClipboardCardView: View {
                 shareItem()
             }
 
+            // OCR for image items
+            if case .image(let imageContent) = item.content {
+                Button("Extract Text from Image") {
+                    Task { await extractOCRText(from: imageContent.data, itemId: item.id) }
+                }
+            }
+
+            // Refresh link preview for link items without metadata
+            if case .link(let linkContent) = item.content,
+               linkContent.faviconData == nil || linkContent.title == linkContent.url.absoluteString {
+                Button("Refresh Link Preview") {
+                    Task { await enrichLinkItem(item, linkContent: linkContent) }
+                }
+            }
+
             Divider()
 
             // Tag submenu
@@ -600,6 +616,56 @@ struct ClipboardCardView: View {
             win.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    // MARK: - OCR
+
+    private func extractOCRText(from data: Data, itemId: UUID) async {
+        do {
+            let text = try await OCRService.shared.recognizeText(from: data)
+            showOCRResultWindow(text: text, itemId: itemId)
+        } catch {
+            NSLog("OCR failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func showOCRResultWindow(text: String, itemId: UUID) {
+        Self.ocrWindowStore[itemId]?.close()
+
+        let view = OCRResultView(
+            text: text,
+            onCopy: {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                Self.ocrWindowStore[itemId]?.close()
+                Self.ocrWindowStore.removeValue(forKey: itemId)
+            },
+            onClose: {
+                Self.ocrWindowStore[itemId]?.close()
+                Self.ocrWindowStore.removeValue(forKey: itemId)
+            }
+        )
+        let win = makeStandaloneWindow(
+            NSHostingController(rootView: view),
+            title: "Extracted Text",
+            size: NSSize(width: 420, height: 320),
+            resizable: true
+        )
+        Self.ocrWindowStore[itemId] = win
+        showStandaloneWindow(win)
+    }
+
+    // MARK: - Link Enrichment
+
+    private func enrichLinkItem(_ item: ClipboardItem, linkContent: LinkContent) async {
+        let meta = await LinkMetadataService.shared.fetchMetadata(for: linkContent.url)
+        viewModel.updateLinkMetadata(
+            item,
+            title: meta.title,
+            description: meta.description,
+            faviconData: meta.faviconData,
+            previewImageData: meta.previewImageData
+        )
     }
 
     // MARK: - Rename Sheet

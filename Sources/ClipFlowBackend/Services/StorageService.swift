@@ -36,11 +36,34 @@ public class StorageService {
         // Check for duplicates first
         NSLog("🔍 Checking for duplicates")
         if await itemExists(hash: item.metadata.hash) {
-            NSLog("⚠️ Item already exists, skipping")
-            if var existingItem = try await databaseManager.getItem(hash: item.metadata.hash) {
-                existingItem = await loadLargeContent(existingItem)
-                await cacheManager.cacheItem(existingItem, hash: existingItem.metadata.hash)
-                return existingItem
+            NSLog("⚠️ Item already exists — bumping to top with fresh timestamp")
+            if let existingItem = try await databaseManager.getItem(hash: item.metadata.hash) {
+                // Determine best content: enrich link metadata if the new copy has more,
+                // otherwise keep existing content (preserves user edits like renames).
+                let bestContent: ClipboardContent
+                if case .link(let newLink) = item.content,
+                   case .link(let oldLink) = existingItem.content,
+                   Self.linkHasRicherMetadata(new: newLink, old: oldLink) {
+                    NSLog("🔄 Also enriching link with fresh metadata")
+                    bestContent = item.content
+                } else {
+                    bestContent = existingItem.content
+                }
+
+                // Always update timestamp + source so the item bubbles to the top.
+                // This is standard clipboard manager behavior: re-copying something
+                // should show it as "just now", not buried at its original position.
+                let bumped = ClipboardItem(
+                    id: existingItem.id, content: bestContent,
+                    metadata: existingItem.metadata, source: item.source,
+                    timestamps: item.timestamps, security: existingItem.security,
+                    collectionIds: existingItem.collectionIds, tagIds: existingItem.tagIds,
+                    isFavorite: existingItem.isFavorite, isPinned: existingItem.isPinned,
+                    isDeleted: existingItem.isDeleted
+                )
+                try await databaseManager.saveItem(bumped)
+                await cacheManager.cacheItem(bumped, hash: bumped.metadata.hash)
+                return bumped
             }
             return item
         }
@@ -73,6 +96,17 @@ public class StorageService {
 
         NSLog("✅ StorageService.saveItem completed successfully")
         return modifiedItem
+    }
+
+    /// Returns true when the newly fetched link has metadata that the stored version lacks.
+    private static func linkHasRicherMetadata(new: LinkContent, old: LinkContent) -> Bool {
+        let newHasTitle = new.title != nil && new.title != new.url.absoluteString
+        let oldHasTitle = old.title != nil && old.title != old.url.absoluteString
+        if newHasTitle && !oldHasTitle { return true }
+        if new.faviconData != nil && old.faviconData == nil { return true }
+        if new.previewImageData != nil && old.previewImageData == nil { return true }
+        if new.description != nil && old.description == nil { return true }
+        return false
     }
 
     public func getItem(id: UUID) async throws -> ClipboardItem? {
@@ -230,6 +264,13 @@ public class StorageService {
             cacheHitRate: Double(cacheHits) / Double(max(cacheHits + cacheMisses, 1)),
             cacheStats: cacheStats
         )
+    }
+
+    /// Persistent item count from DB (unlike totalItemsStored which resets each session).
+    public func getTotalItemCount() async throws -> Int {
+        try await databaseManager.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM clipboard_items WHERE is_deleted = 0") ?? 0
+        }
     }
 
     // MARK: - Maintenance Operations

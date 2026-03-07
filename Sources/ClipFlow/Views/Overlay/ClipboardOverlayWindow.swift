@@ -300,7 +300,11 @@ class ClipboardOverlayWindow: NSPanel {
             overlayView.closeOverlay()
 
         case 36: // Enter/Return
-            overlayView.pasteCurrentSelection()
+            if event.modifierFlags.contains(.shift) {
+                overlayView.pasteCurrentSelectionPlain()
+            } else {
+                overlayView.pasteCurrentSelection()
+            }
 
         case 123: // Left arrow
             overlayView.navigateLeft()

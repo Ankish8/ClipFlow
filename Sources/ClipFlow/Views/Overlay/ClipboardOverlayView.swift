@@ -189,6 +189,18 @@ struct ClipboardOverlayView: View {
         selectAndPaste(items[selectedIndex], index: selectedIndex)
     }
 
+    /// Paste current selection with formatting stripped (Shift+Return shortcut).
+    func pasteCurrentSelectionPlain() {
+        let items = filteredItems
+        guard selectedIndex < items.count else { return }
+        let item = items[selectedIndex]
+        viewModel.pasteItem(item, transform: .removeFormatting)
+        Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+        }
+    }
+
     func deleteCurrentSelection() {
         let items = filteredItems
         guard selectedIndex < items.count else { return }

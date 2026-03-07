@@ -68,6 +68,9 @@ public class TagService {
 
     /// Delete a tag
     public func deleteTag(id: UUID) async throws {
+        // Remove auto-tag rules referencing this tag before deleting
+        AutoTagService.shared.pruneRulesForDeletedTag(tagId: id)
+
         try await database.deleteTag(id: id)
 
         cachedTags.removeAll { $0.id == id }

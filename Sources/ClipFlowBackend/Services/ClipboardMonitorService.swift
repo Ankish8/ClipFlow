@@ -188,9 +188,29 @@ public class ClipboardMonitorService {
             let secureItem = await applySecurityChecks(item)
             NSLog("✅ Security checks completed")
 
+            // Auto-tag: evaluate rules and merge matching tags before storage
+            var taggedItem = secureItem
+            let autoTags = AutoTagService.shared.matchingTagIds(for: secureItem)
+            if !autoTags.isEmpty {
+                taggedItem = ClipboardItem(
+                    id: secureItem.id,
+                    content: secureItem.content,
+                    metadata: secureItem.metadata,
+                    source: secureItem.source,
+                    timestamps: secureItem.timestamps,
+                    security: secureItem.security,
+                    collectionIds: secureItem.collectionIds,
+                    tagIds: secureItem.tagIds.union(autoTags),
+                    isFavorite: secureItem.isFavorite,
+                    isPinned: secureItem.isPinned,
+                    isDeleted: secureItem.isDeleted
+                )
+                NSLog("🏷️ Auto-tagged item with \(autoTags.count) tags")
+            }
+
             // Store the item
             NSLog("💾 About to save item to storage")
-            let persistedItem = try await storageService.saveItem(secureItem)
+            let persistedItem = try await storageService.saveItem(taggedItem)
             NSLog("💾 Successfully saved item to storage: \(persistedItem.content.contentType)")
 
             // Update statistics
@@ -413,14 +433,13 @@ public class ClipboardMonitorService {
 
             if let url = URL(string: cleanedText) {
                 NSLog("🔗 SUCCESS: Converting text to link content for URL: \(url)")
-                // TEMPORARY FIX: Skip metadata fetching to avoid hanging
-                NSLog("🔄 Skipping metadata fetch for debugging")
+                let (title, description, favicon, preview) = await fetchURLMetadata(url)
                 return .link(LinkContent(
                     url: url,
-                    title: url.absoluteString,
-                    description: nil,
-                    faviconData: nil,
-                    previewImageData: nil
+                    title: title ?? url.absoluteString,
+                    description: description,
+                    faviconData: favicon,
+                    previewImageData: preview
                 ))
             } else {
                 NSLog("❌ URL creation failed even after cleaning - treating as plain text")
@@ -613,8 +632,10 @@ public class ClipboardMonitorService {
 
         NSLog("🔗 Processing URL content: \(url.absoluteString)")
 
-        // Fetch metadata asynchronously (currently disabled)
+        // Fetch metadata from HTML (OG tags, title, favicon, preview image)
+        NSLog("🌐 Starting metadata fetch for: \(url.absoluteString)")
         let (title, description, favicon, preview) = await fetchURLMetadata(url)
+        NSLog("🌐 Metadata fetch complete — title: \(title ?? "nil"), desc: \(description?.prefix(40) ?? "nil"), favicon: \(favicon?.count ?? 0) bytes, preview: \(preview?.count ?? 0) bytes")
 
         return .link(LinkContent(
             url: url,
@@ -864,9 +885,8 @@ public class ClipboardMonitorService {
     }
 
     private func fetchURLMetadata(_ url: URL) async -> (title: String?, description: String?, favicon: Data?, preview: Data?) {
-        // This would fetch metadata from the URL
-        // For now, return nil values
-        return (nil, nil, nil, nil)
+        let meta = await LinkMetadataService.shared.fetchMetadata(for: url)
+        return (meta.title, meta.description, meta.faviconData, meta.previewImageData)
     }
 }
 

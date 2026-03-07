@@ -538,6 +538,13 @@ public class ClipboardService: ClipboardServiceAPI {
         return []
     }
 
+    /// Storage statistics for the Settings UI.
+    public func getStorageInfo() async throws -> (count: Int, stats: StorageStatistics) {
+        let count = try await storageService.getTotalItemCount()
+        let stats = await storageService.getStorageStatistics()
+        return (count, stats)
+    }
+
     public func pasteItem(_ item: ClipboardItem) async {
         do {
             try await paste(item, transform: nil)
