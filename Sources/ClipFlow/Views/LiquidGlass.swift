@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import ClipFlowCore
 
 // MARK: - Liquid Glass View Modifiers
@@ -19,7 +18,7 @@ extension View {
     /// Full-surface Liquid Glass panel.
     /// Drives live compositing via SwiftUI's Metal render pass — no key-window required.
     func overlayPanel(cornerRadius: CGFloat = 32) -> some View {
-        modifier(OverlayPanelChromeModifier(cornerRadius: cornerRadius))
+        self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
     }
 
     /// Subtle card chrome that keeps cards readable against the overlay surface.
@@ -28,114 +27,19 @@ extension View {
         tint: Color? = nil,
         isSelected: Bool = false
     ) -> some View {
-        modifier(
-            ClipboardCardChromeModifier(
-                cornerRadius: cornerRadius,
-                tint: tint,
-                isSelected: isSelected
-            )
+        self.glassEffect(
+            glassStyle(tint: tint, isSelected: isSelected),
+            in: .rect(cornerRadius: cornerRadius)
         )
     }
-}
 
-private struct OverlayPanelChromeModifier: ViewModifier {
-    let cornerRadius: CGFloat
-
-    @Environment(\.colorScheme) private var colorScheme
-
-    func body(content: Content) -> some View {
-        content
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(backgroundFill)
-            }
-            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: 1)
-            }
-            .shadow(
-                color: shadowColor,
-                radius: colorScheme == .dark ? 20 : 16,
-                y: colorScheme == .dark ? 10 : 8
-            )
-    }
-
-    private var backgroundFill: Color {
-        colorScheme == .dark
-            ? Color.black.opacity(0.22)
-            : Color.white.opacity(0.58)
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark
-            ? Color.white.opacity(0.10)
-            : Color.black.opacity(0.06)
-    }
-
-    private var shadowColor: Color {
-        Color.black.opacity(colorScheme == .dark ? 0.22 : 0.08)
-    }
-}
-
-private struct ClipboardCardChromeModifier: ViewModifier {
-    let cornerRadius: CGFloat
-    let tint: Color?
-    let isSelected: Bool
-
-    @Environment(\.colorScheme) private var colorScheme
-
-    func body(content: Content) -> some View {
-        content
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(backgroundFill)
-
-                    if let tint {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(tint.opacity(colorScheme == .dark ? 0.05 : 0.03))
-                    }
-                }
-            }
-            .overlay {
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(borderColor, lineWidth: 1)
-
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(highlightBorderColor, lineWidth: 0.5)
-                }
-            }
-            .shadow(
-                color: shadowColor,
-                radius: isSelected ? 12 : 8,
-                y: isSelected ? 7 : 4
-            )
-    }
-
-    private var backgroundFill: Color {
-        if colorScheme == .dark {
-            return Color.white.opacity(isSelected ? 0.11 : 0.08)
+    private func glassStyle(tint: Color?, isSelected: Bool) -> Glass {
+        if let tint {
+            return .regular.tint(tint.opacity(isSelected ? 0.18 : 0.10)).interactive()
         }
-        return Color.white.opacity(isSelected ? 0.96 : 0.88)
-    }
-
-    private var borderColor: Color {
-        if colorScheme == .dark {
-            return Color.white.opacity(isSelected ? 0.16 : 0.10)
-        }
-        return Color.black.opacity(isSelected ? 0.10 : 0.06)
-    }
-
-    private var highlightBorderColor: Color {
-        Color.white.opacity(colorScheme == .dark ? 0.04 : 0.34)
-    }
-
-    private var shadowColor: Color {
-        Color.black.opacity(colorScheme == .dark
-            ? (isSelected ? 0.22 : 0.14)
-            : (isSelected ? 0.08 : 0.05))
+        return isSelected
+            ? .regular.tint(Color.primary.opacity(0.08)).interactive()
+            : .regular.interactive()
     }
 }
 

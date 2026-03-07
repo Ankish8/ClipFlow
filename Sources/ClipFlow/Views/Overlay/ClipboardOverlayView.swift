@@ -5,7 +5,6 @@ struct ClipboardOverlayView: View {
     let viewModel: ClipboardViewModel
     @State private var selectedIndex: Int = 0
     @State private var selectedTagIds: Set<UUID> = []
-    private let panelChromeInset: CGFloat = 6
 
     // Search state — raw text from the search field
     @State private var searchText = ""
@@ -64,7 +63,6 @@ struct ClipboardOverlayView: View {
 
     var body: some View {
         overlayContent
-            .padding(panelChromeInset)
     }
 
     @ViewBuilder
