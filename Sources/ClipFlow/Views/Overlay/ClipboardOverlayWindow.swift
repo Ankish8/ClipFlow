@@ -239,12 +239,16 @@ class ClipboardOverlayWindow: NSPanel {
         case .leftMouseDragged:
             if let startP = dragTrackStartPoint {
                 let curP = event.locationInWindow
-                if hypot(curP.x - startP.x, curP.y - startP.y) > 4 {
+                let dist = hypot(curP.x - startP.x, curP.y - startP.y)
+                if dist > 4 {
                     dragTrackStartPoint = nil
                     if let cardView = findCardDragView(at: startP) {
+                        NSLog("🟢 sendEvent: drag started from startP=\(startP), found=\(type(of: cardView))")
                         cardView.beginDragFromWindow(event: event, startPoint: startP)
                         // Don't return early — super dispatches to the view too,
                         // but CardDragView.mouseDragged guards on dragStarted so it's a no-op.
+                    } else {
+                        NSLog("🔴 sendEvent: drag threshold exceeded at startP=\(startP) but findCardDragView=nil")
                     }
                 }
             }

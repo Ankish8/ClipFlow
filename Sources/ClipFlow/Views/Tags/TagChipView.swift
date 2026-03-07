@@ -2,6 +2,54 @@ import SwiftUI
 import ClipFlowCore
 import UniformTypeIdentifiers
 
+// MARK: - Tag Drop Coordinator (module-level singleton)
+
+/// Coordinates drag-to-tag assignment via NSDraggingSource callbacks.
+///
+/// Each TagDropView registers itself (not its frame) here. During a drag,
+/// Coordinator.draggingSession(_:movedTo:) calls tagId(at:) which computes
+/// each view's screen frame LIVE from the current window position. This avoids
+/// the stale-frame bug: if frames were stored at registration time the overlay
+/// window is still at its off-screen initial position (below the visible area),
+/// so every lookup during the actual drag would return nil.
+@MainActor
+final class TagDropCoordinator: ObservableObject {
+    static let shared = TagDropCoordinator()
+
+    /// The tag currently under the drag cursor, or nil.
+    @Published var hoveredTagId: UUID? = nil
+
+    /// Weak references to TagDropView instances, keyed by tag ID.
+    private var tagViews: [UUID: WeakNSView] = [:]
+
+    /// Called when the user drops a card onto a tag. (itemId, tagId)
+    var onTagApplied: ((UUID, UUID) -> Void)? = nil
+
+    func register(view: NSView, tagId: UUID) {
+        tagViews[tagId] = WeakNSView(view)
+    }
+
+    func unregister(tagId: UUID) {
+        tagViews.removeValue(forKey: tagId)
+    }
+
+    /// Computes each tag chip's screen frame live so window animation never
+    /// causes stale coordinates. Called on every drag-move event.
+    func tagId(at screenPoint: NSPoint) -> UUID? {
+        tagViews.first { _, ref in
+            guard let v = ref.value, let w = v.window else { return false }
+            let screenFrame = w.convertToScreen(v.convert(v.bounds, to: nil))
+            return screenFrame.contains(screenPoint)
+        }?.key
+    }
+}
+
+/// Weak wrapper so TagDropCoordinator doesn't retain NSView instances.
+private final class WeakNSView {
+    weak var value: NSView?
+    init(_ v: NSView) { value = v }
+}
+
 /// A colored chip button representing a tag
 struct TagChipView: View {
     let tag: Tag
@@ -22,6 +70,10 @@ struct TagChipView: View {
     @State private var selectedColorForEdit: TagColor  // Current color being edited
     @FocusState private var isTextFieldFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var dropCoordinator = TagDropCoordinator.shared
+    private var isActiveDrop: Bool {
+        isDropTarget || dropCoordinator.hoveredTagId == tag.id
+    }
 
     init(
         tag: Tag,
@@ -109,11 +161,11 @@ struct TagChipView: View {
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
         }
-        .buttonStyle(.toolbarChip(isSelected: isSelected || isDropTarget, tint: tagColor))
+        .buttonStyle(.toolbarChip(isSelected: isSelected || isActiveDrop, tint: tagColor))
         // Drop target: scale up + colored ring so the user clearly sees the assignment target
-        .scaleEffect(isDropTarget ? 1.1 : 1.0)
+        .scaleEffect(isActiveDrop ? 1.1 : 1.0)
         .overlay {
-            if isDropTarget {
+            if isActiveDrop {
                 Capsule()
                     .stroke(tagColor, lineWidth: 2)
                     .overlay(alignment: .topTrailing) {
@@ -125,14 +177,17 @@ struct TagChipView: View {
                     }
             }
         }
-        .animation(.spring(response: 0.2, dampingFraction: 0.65), value: isDropTarget)
+        .animation(.spring(response: 0.2, dampingFraction: 0.65), value: isActiveDrop)
         .overlay {
             // AppKit NSDraggingDestination overlay — replaces SwiftUI .onDrop.
             // SwiftUI .onDrop reads drag data via NSItemProvider.loadDataRepresentation
             // (async), which can silently fail when the data was written synchronously
             // by beginDraggingSession / NSPasteboardItem in AppKitCardDragOverlay.
             // Reading NSDraggingInfo.draggingPasteboard directly (sync) is reliable.
-            TagDropOverlay(onDrop: onDrop, isDropTarget: $isDropTarget)
+            // tagId is passed so TagDropView can register its screen frame with
+            // TagDropCoordinator — enabling coordinate-based drop detection that
+            // bypasses GlassEffectContainer view-hierarchy routing failures.
+            TagDropOverlay(tagId: tag.id, onDrop: onDrop, isDropTarget: $isDropTarget)
         }
         .help(tag.name)
         .onChange(of: tag.name) { _, newName in
@@ -216,6 +271,7 @@ struct TagChipView: View {
 /// always reliable. hitTest returns nil so mouse events pass through to
 /// the SwiftUI button layer beneath.
 private struct TagDropOverlay: NSViewRepresentable {
+    let tagId: UUID
     let onDrop: ((UUID) -> Void)?
     @Binding var isDropTarget: Bool
 
@@ -226,12 +282,14 @@ private struct TagDropOverlay: NSViewRepresentable {
     func makeNSView(context: Context) -> TagDropView {
         let v = TagDropView()
         v.coordinator = context.coordinator
+        v.tagId = tagId
         v.registerForDraggedTypes([Self.dragType])
         return v
     }
 
     func updateNSView(_ v: TagDropView, context: Context) {
         context.coordinator.parent = self
+        v.tagId = tagId
     }
 
     final class Coordinator: NSObject {
@@ -241,7 +299,21 @@ private struct TagDropOverlay: NSViewRepresentable {
 
     final class TagDropView: NSView {
         var coordinator: Coordinator?
+        var tagId: UUID = UUID()
         private static let dragType = NSPasteboard.PasteboardType(UTType.clipboardItemID.identifier)
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // Register/unregister the VIEW (not its frame) so TagDropCoordinator
+            // can compute the screen frame live during a drag. Storing the frame
+            // here would be stale: the overlay window is still at its off-screen
+            // initial position when this fires, before the slide-up animation.
+            if window != nil {
+                TagDropCoordinator.shared.register(view: self, tagId: tagId)
+            } else {
+                TagDropCoordinator.shared.unregister(tagId: tagId)
+            }
+        }
 
         override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
             guard sender.draggingPasteboard.availableType(from: [Self.dragType]) != nil else { return [] }
@@ -277,12 +349,14 @@ private struct TagDropOverlay: NSViewRepresentable {
             DispatchQueue.main.async { self.coordinator?.parent.isDropTarget = false }
         }
 
-        // acceptsFirstResponder = false: prevents keyboard focus capture.
-        // isOpaque = false: transparent; no background fill.
-        // hitTest uses the default (returns self for points within bounds) so AppKit's
-        // drag manager can route drag sessions to this view for draggingEntered / performDragOperation.
-        // SwiftUI button taps still work because SwiftUI registers NSGestureRecognizers at the
-        // NSHostingView level — those fire before hitTest dispatch.
+        // hitTest returns nil so all mouse events pass through to the SwiftUI button
+        // layer beneath. TagDropView sits in its own NSHostingView (AppKitCardDragOverlay)
+        // which is a SIBLING of the card-content NSHostingView — NOT a descendant of it.
+        // Therefore the card-content NSHostingView's NSGestureRecognizers never see events
+        // consumed by TagDropView; returning nil is the only way to let button taps reach
+        // the sibling hosting view that actually holds the SwiftUI button.
+        // Drop detection is handled by TagDropCoordinator (coordinate-based, no hitTest needed).
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override var acceptsFirstResponder: Bool { false }
         override var isOpaque: Bool { false }
     }

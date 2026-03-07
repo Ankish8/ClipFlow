@@ -380,6 +380,16 @@ struct TagFilterBarView: View {
             }
             .store(in: &subscriptionHolder.cancellables)
 
+        // Wire coordinate-based drag-to-tag drops.
+        // TagDropCoordinator.draggingSession(_:endedAt:) calls this when a card is
+        // dropped over a tag chip (detected via screen frame comparison, bypassing
+        // GlassEffectContainer view-hierarchy routing).
+        let vm = viewModel
+        TagDropCoordinator.shared.onTagApplied = { itemId, tagId in
+            NSLog("📌 TagDropCoordinator: assigning item \(itemId) → tag \(tagId)")
+            vm.addTagToItem(tagId: tagId, itemId: itemId)
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
     }
 }
 

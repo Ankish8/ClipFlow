@@ -325,17 +325,44 @@ struct ClipboardCardView: View {
 
     // MARK: - Drag and Drop Support
 
+    /// Creates a stable temp file URL for image drags.
+    /// Drag payloads cannot rely on the background warm-up having finished yet.
+    fileprivate static func temporaryImageFileURL(itemID: UUID, imageContent: ImageContent) throws -> URL {
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFileName = "\(itemID.uuidString).\(imageContent.format.rawValue)"
+        let tempURL = tempDir.appendingPathComponent(tempFileName)
+
+        try imageContent.data.write(to: tempURL, options: .atomic)
+        return tempURL
+    }
+
+    /// Raw image bytes give drop targets something usable immediately, even before
+    /// the AppKit thumbnail/image cache has finished warming up.
+    fileprivate static func imagePasteboardType(for format: ImageFormat) -> NSPasteboard.PasteboardType {
+        switch format {
+        case .png:
+            return .png
+        case .jpeg:
+            return NSPasteboard.PasteboardType("public.jpeg")
+        case .gif:
+            return NSPasteboard.PasteboardType("com.compuserve.gif")
+        case .tiff:
+            return .tiff
+        case .bmp:
+            return NSPasteboard.PasteboardType("com.microsoft.bmp")
+        case .heif:
+            return NSPasteboard.PasteboardType("public.heif")
+        case .webp:
+            return NSPasteboard.PasteboardType("org.webmproject.webp")
+        case .svg:
+            return NSPasteboard.PasteboardType("public.svg-image")
+        }
+    }
+
     private func createTemporaryImageFileAsync(from imageContent: ImageContent) async -> String? {
         return await Task(priority: .utility) {
             do {
-                // Create temporary directory
-                let tempDir = FileManager.default.temporaryDirectory
-                let tempFileName = "\(item.id.uuidString).\(imageContent.format.rawValue)"
-                let tempURL = tempDir.appendingPathComponent(tempFileName)
-
-                // Write image data to temporary file
-                try imageContent.data.write(to: tempURL)
-
+                let tempURL = try Self.temporaryImageFileURL(itemID: item.id, imageContent: imageContent)
                 return tempURL.path
             } catch {
                 print("Failed to create temporary image file: \(error)")
@@ -991,6 +1018,33 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession,
                              sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+
+        /// Called on every drag move with current screen position (AppKit bottom-left origin).
+        /// We pass this to TagDropCoordinator which compares against registered tag frames —
+        /// bypassing AppKit drag routing that fails inside GlassEffectContainer.
+        func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+            let newTagId = TagDropCoordinator.shared.tagId(at: screenPoint)
+            let wasOverTag = TagDropCoordinator.shared.hoveredTagId != nil
+            let isOverTag  = newTagId != nil
+
+            // Show/hide the "copy" cursor badge (green +) when hovering a tag chip.
+            if isOverTag && !wasOverTag {
+                NSCursor.dragCopy.push()
+            } else if !isOverTag && wasOverTag {
+                NSCursor.pop()
+            }
+
+            TagDropCoordinator.shared.hoveredTagId = newTagId
+        }
+
+        /// Called when the drag session ends. If a tag is hovered, apply it.
+        func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+            if let tagId = TagDropCoordinator.shared.hoveredTagId {
+                TagDropCoordinator.shared.onTagApplied?(parent.item.id, tagId)
+                NSCursor.pop()  // Restore cursor after drop on tag
+            }
+            TagDropCoordinator.shared.hoveredTagId = nil
+        }
     }
 
     // MARK: Drag-capturing NSView
@@ -1072,6 +1126,10 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         override func beginDragFromWindow(event: NSEvent, startPoint windowStartPoint: NSPoint) {
             guard !dragStarted, let coord = coordinator else { return }
             dragStarted = true
+            // Immediately hide the pin button so it can't fire during the drag.
+            // The hover state is reset to false — SwiftUI will hide the button on
+            // the next render, cancelling any in-flight gesture recogniser.
+            coord.parent.isHoveringHeader = false
             let curP  = convert(event.locationInWindow, from: nil)
             let startP = convert(windowStartPoint, from: nil)
             let pbItem = buildPasteboardItem(for: coord.parent)
@@ -1101,6 +1159,10 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             }
             dragStarted = true
 
+            // Mirror the window-level drag path: once a drag starts, collapse header
+            // hover UI so the pin button cannot steal follow-up mouse handling.
+            coord.parent.isHoveringHeader = false
+
             let pbItem = buildPasteboardItem(for: coord.parent)
             // Use the pre-rendered full-card thumbnail; fall back to image or blank
             let thumbnail = coord.parent.dragThumbnail
@@ -1124,11 +1186,52 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             super.mouseUp(with: event)
         }
 
+        /// Only pass header clicks through when the topmost underlying AppKit target
+        /// is an actual control (for example the pin button). The old implementation
+        /// passed the entire header through, forcing header drags to rely solely on
+        /// the window-level fallback path and making them flakier than body drags.
+        private func shouldPassThroughHeaderHit(at point: NSPoint) -> Bool {
+            guard point.y >= bounds.height - headerPt,
+                  let sv = superview,
+                  let selfIndex = sv.subviews.firstIndex(of: self) else {
+                return false
+            }
+
+            let superPoint = convert(point, to: sv)
+
+            // Inspect the first sibling that would receive the event if we returned nil.
+            for sibling in sv.subviews[..<selfIndex].reversed() {
+                let siblingPoint = sibling.convert(superPoint, from: sv)
+                guard let hitView = sibling.hitTest(siblingPoint) else { continue }
+                return isInteractiveHeaderTarget(hitView)
+            }
+
+            return false
+        }
+
+        private func isInteractiveHeaderTarget(_ hitView: NSView) -> Bool {
+            var current: NSView? = hitView
+
+            while let view = current {
+                if view is NSControl { return true }
+
+                let className = NSStringFromClass(type(of: view))
+                if className.localizedCaseInsensitiveContains("button")
+                    || className.localizedCaseInsensitiveContains("control") {
+                    return true
+                }
+
+                current = view.superview
+            }
+
+            return false
+        }
+
         override func hitTest(_ point: NSPoint) -> NSView? {
-            // Return nil for the header region so SwiftUI buttons receive clicks.
-            // In unflipped AppKit coords (origin = bottom-left), the header sits at
-            // the visual top of the card: y ≥ bounds.height - headerPt.
-            if point.y >= bounds.height - headerPt { return nil }
+            // Keep direct drag handling for the whole card, including the header.
+            // Only pass through to the sibling SwiftUI/AppKit hierarchy when the
+            // topmost underlying target is a real header control like the pin button.
+            if shouldPassThroughHeaderHit(at: point) { return nil }
             return self
         }
         override var acceptsFirstResponder: Bool { false }
@@ -1154,14 +1257,37 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
 
             // Content-specific data for paste into other apps
             switch item.content {
-            case .image(_):
+            case .image(let imageContent):
+                // Image drags must be self-contained the moment the drag starts.
+                // The async warm-up usually pre-decodes the NSImage and temp file,
+                // but if the user drags early we still need a full payload.
+                pbItem.setData(
+                    imageContent.data,
+                    forType: ClipboardCardView.imagePasteboardType(for: imageContent.format)
+                )
+
+                let dragImage = overlay.nsImage ?? NSImage(data: imageContent.data)
+
                 // TIFF + legacy string — Chrome checks "NeXT TIFF v4.0 pasteboard type"
-                if let tiffData = overlay.nsImage?.tiffRepresentation {
+                if let tiffData = dragImage?.tiffRepresentation {
                     pbItem.setData(tiffData, forType: .tiff)
                     pbItem.setData(tiffData, forType: NSPasteboard.PasteboardType("NeXT TIFF v4.0 pasteboard type"))
                 }
-                // File URL + legacy filenames — Finder needs both
-                if let url = overlay.fileURL {
+
+                // File URL + legacy filenames — Finder needs both. Fall back to
+                // creating the temp file synchronously if the warm-up race lost.
+                let fileURL = overlay.fileURL ?? {
+                    do {
+                        return try ClipboardCardView.temporaryImageFileURL(
+                            itemID: item.id,
+                            imageContent: imageContent
+                        )
+                    } catch {
+                        return nil
+                    }
+                }()
+
+                if let url = fileURL {
                     pbItem.setString(url.absoluteString, forType: .fileURL)
                     pbItem.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
                 }
