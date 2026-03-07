@@ -74,6 +74,17 @@ public protocol ClipboardServiceAPI {
     /// Get most used items
     func getFrequentItems(limit: Int) async -> [ClipboardItem]
 
+    // MARK: Pause / Resume
+
+    /// Temporarily pause clipboard monitoring (user-facing)
+    func pauseMonitoring()
+
+    /// Resume clipboard monitoring after a user pause
+    func resumeMonitoring()
+
+    /// Whether the user has paused monitoring
+    var isPaused: Bool { get }
+
     // MARK: Publishers for Reactive Updates
 
     var itemUpdates: AnyPublisher<ClipboardItem, Never> { get }

@@ -22,6 +22,10 @@ public class ClipboardMonitorService {
     private var isMonitoringPaused = false
     private var lastInternalWriteHash: String? = nil
 
+    // User-facing pause (separate from internal self-write prevention)
+    private var isUserPaused = false
+    public var isUserPausedState: Bool { isUserPaused }
+
     // Publishers for reactive updates
     private let itemSubject = PassthroughSubject<ClipboardItem, Never>()
     private let errorSubject = PassthroughSubject<ClipboardError, Never>()
@@ -108,6 +112,20 @@ public class ClipboardMonitorService {
         NSLog("▶️ Clipboard monitoring resumed")
     }
 
+    public func userPause() {
+        isUserPaused = true
+        statusSubject.send(.paused)
+        NSLog("⏸️ Clipboard monitoring paused by user")
+    }
+
+    public func userResume() {
+        // Update lastChangeCount so anything copied during the pause is skipped
+        lastChangeCount = NSPasteboard.general.changeCount
+        isUserPaused = false
+        statusSubject.send(.monitoring)
+        NSLog("▶️ Clipboard monitoring resumed by user (changeCount synced to \(lastChangeCount))")
+    }
+
     public func notifyInternalWrite(hash: String) {
         lastInternalWriteHash = hash
         NSLog("📝 Notified of internal write with hash: \(hash.prefix(16))...")
@@ -136,9 +154,12 @@ public class ClipboardMonitorService {
 
     @discardableResult
     private func checkClipboard(force: Bool = false) async -> ClipboardItem? {
-        // Skip if monitoring is paused (internal write in progress)
+        // Skip if monitoring is paused (internal write in progress or user pause)
         guard !isMonitoringPaused else {
-            NSLog("⏸️ Skipping clipboard check - monitoring paused")
+            NSLog("⏸️ Skipping clipboard check - monitoring paused (internal)")
+            return nil
+        }
+        guard !isUserPaused else {
             return nil
         }
 
@@ -155,6 +176,14 @@ public class ClipboardMonitorService {
             // Check for privacy compliance (macOS Sequoia)
             let isCompliant = await checkPrivacyCompliance(pasteboard)
             if !isCompliant {
+                return nil
+            }
+
+            // Check app exclusions — skip clipboard from excluded apps
+            let frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+            let excludedApps = UserDefaults.standard.stringArray(forKey: "excludedAppBundleIDs") ?? []
+            if excludedApps.contains(frontApp) {
+                NSLog("🚫 Skipping clipboard from excluded app: \(frontApp)")
                 return nil
             }
 

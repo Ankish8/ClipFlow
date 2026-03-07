@@ -234,6 +234,44 @@ class ClipboardOverlayWindow: NSPanel {
     private var dragTrackStartPoint: NSPoint? = nil
 
     override func sendEvent(_ event: NSEvent) {
+        // Intercept spacebar before the search text field consumes it.
+        // A lone space is meaningless as a search query; spacebar toggles Quick Look.
+        if event.type == .keyDown, event.keyCode == 49,
+           !event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.option),
+           !event.modifierFlags.contains(.control) {
+            NotificationCenter.default.post(name: .toggleQuickLook, object: nil)
+            return // swallow — don't let the TextField insert a space
+        }
+
+        // Intercept arrow keys before the search TextField consumes them.
+        // Arrow keys always navigate cards, even when the search field has focus.
+        // Must use notifications (not direct struct method calls) because @State
+        // lives in SwiftUI's storage, not on the stored struct copy.
+        if event.type == .keyDown {
+            switch event.keyCode {
+            case 123: // Left arrow
+                NotificationCenter.default.post(name: .navigateOverlayLeft, object: nil)
+                return
+            case 124: // Right arrow
+                NotificationCenter.default.post(name: .navigateOverlayRight, object: nil)
+                return
+            default:
+                break
+            }
+        }
+
+        // Double-click to paste — handled at AppKit level so single-tap
+        // in SwiftUI fires instantly without gesture disambiguation delay
+        if event.type == .leftMouseDown, event.clickCount == 2 {
+            if NSEvent.modifierFlags.contains(.shift) {
+                overlayView?.pasteCurrentSelectionPlain()
+            } else {
+                overlayView?.pasteCurrentSelection()
+            }
+            return
+        }
+
         switch event.type {
         case .leftMouseDown:
             dragTrackStartPoint = event.locationInWindow
@@ -296,8 +334,8 @@ class ClipboardOverlayWindow: NSPanel {
         }
 
         switch event.keyCode {
-        case 53: // Escape
-            overlayView.closeOverlay()
+        case 53: // Escape — dismiss Quick Look first, then overlay
+            overlayView.dismissQuickLookOrClose()
 
         case 36: // Enter/Return
             if event.modifierFlags.contains(.shift) {
@@ -316,6 +354,16 @@ class ClipboardOverlayWindow: NSPanel {
             let number = Int(event.keyCode) - 17 // Convert keycode to number (1-9)
             if number >= 1 && number <= 9 {
                 overlayView.selectByNumber(number)
+            }
+
+        // case 49 (Spacebar) handled in sendEvent() to intercept before TextField
+
+        case 14: // E key — edit current selection
+            // Only trigger when not typing in search field
+            if !(firstResponder is NSTextView) {
+                overlayView.editCurrentSelection()
+            } else {
+                super.keyDown(with: event)
             }
 
         default:

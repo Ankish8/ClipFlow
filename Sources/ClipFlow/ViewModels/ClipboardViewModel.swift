@@ -521,6 +521,62 @@ class ClipboardViewModel {
         }
     }
 
+    /// Update the code content of a code-type item. Preserves language/metadata.
+    func updateItemCode(_ item: ClipboardItem, newText: String) {
+        guard case .code(let old) = item.content else { return }
+        let newContent = ClipboardContent.code(
+            CodeContent(code: newText, language: old.language,
+                        syntaxHighlightedData: old.syntaxHighlightedData,
+                        repository: old.repository)
+        )
+        let updated = ClipboardItem(
+            id: item.id, content: newContent,
+            metadata: ItemMetadata.generate(for: newContent),
+            source: item.source, timestamps: item.timestamps,
+            security: item.security, collectionIds: item.collectionIds,
+            tagIds: item.tagIds, isFavorite: item.isFavorite,
+            isPinned: item.isPinned, isDeleted: item.isDeleted
+        )
+        Task {
+            do {
+                try await clipboardService.updateItemContent(updated)
+                if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                    items[idx] = updated
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Update the content of a snippet-type item. Preserves metadata.
+    func updateItemSnippet(_ item: ClipboardItem, newText: String) {
+        guard case .snippet(let old) = item.content else { return }
+        let newContent = ClipboardContent.snippet(
+            SnippetContent(id: old.id, title: old.title, content: newText,
+                           placeholders: old.placeholders, keyword: old.keyword,
+                           category: old.category, usageCount: old.usageCount)
+        )
+        let updated = ClipboardItem(
+            id: item.id, content: newContent,
+            metadata: ItemMetadata.generate(for: newContent),
+            source: item.source, timestamps: item.timestamps,
+            security: item.security, collectionIds: item.collectionIds,
+            tagIds: item.tagIds, isFavorite: item.isFavorite,
+            isPinned: item.isPinned, isDeleted: item.isDeleted
+        )
+        Task {
+            do {
+                try await clipboardService.updateItemContent(updated)
+                if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                    items[idx] = updated
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     /// Update the URL (and optionally title) of a link-type item.
     func updateItemLink(_ item: ClipboardItem, newURLString: String, newTitle: String?) {
         guard case .link(let old) = item.content,

@@ -53,7 +53,9 @@ struct ExpandableSearchBar: View {
         .toolbarInputShell()
         .animation(.easeInOut(duration: 0.1), value: searchText.isEmpty)
         .onAppear {
-            // Small delay lets the view settle into the hierarchy before claiming focus
+            // Focus the search field so typing works immediately.
+            // Arrow keys are intercepted at the window level (sendEvent)
+            // before the TextField field editor can consume them.
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(80))
                 isTextFieldFocused = true

@@ -115,6 +115,16 @@ final class MenuBarManager: NSObject, ObservableObject {
 
         // Quick Actions
         menu.addItem(NSMenuItem(title: "Show Overlay (⌥⌘V)", action: #selector(showOverlay), keyEquivalent: ""))
+
+        // Pause / Resume toggle
+        let isPaused = clipboardService.isPaused
+        let pauseItem = NSMenuItem(
+            title: isPaused ? "Resume Recording" : "Pause Recording",
+            action: #selector(togglePauseRecording),
+            keyEquivalent: ""
+        )
+        menu.addItem(pauseItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // Recent items submenu
@@ -189,6 +199,27 @@ final class MenuBarManager: NSObject, ObservableObject {
 
     @objc func showOverlay() {
         overlayManager.showOverlay()
+    }
+
+    @objc private func togglePauseRecording() {
+        if clipboardService.isPaused {
+            clipboardService.resumeMonitoring()
+            updateStatusIcon(paused: false)
+        } else {
+            clipboardService.pauseMonitoring()
+            updateStatusIcon(paused: true)
+        }
+    }
+
+    private func updateStatusIcon(paused: Bool) {
+        guard let button = statusItem?.button else { return }
+        let symbolName = paused ? "doc.on.clipboard.fill" : "doc.on.clipboard"
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "ClipFlow")
+        image?.isTemplate = true
+        button.image = image
+        button.toolTip = paused
+            ? "ClipFlow - Recording Paused"
+            : "ClipFlow - Clipboard Manager (⌥⌘V to open)"
     }
 
     @objc private func pasteItem(_ sender: NSMenuItem) {

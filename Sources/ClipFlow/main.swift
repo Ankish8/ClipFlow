@@ -56,6 +56,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager = MenuBarManager.shared
         overlayManager = OverlayManager.shared
         cacheManager = CacheManager.shared
+        _ = QuickLookPanelController.shared
 
         // ClipboardMonitorActor removed - using ClipboardService directly
 
@@ -179,6 +180,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             while true {
                 try? await Task.sleep(for: .seconds(30))
                 await logPerformanceMetrics()
+            }
+        }
+
+        // Periodic auto-delete check (every hour) for long-running sessions
+        Task { @MainActor in
+            while true {
+                try? await Task.sleep(for: .seconds(3600))
+                let autoDeleteDays = UserDefaults.standard.integer(forKey: "autoDeleteAfterDays")
+                if autoDeleteDays > 0 {
+                    do {
+                        try await ClipboardService.shared.deleteItemsOlderThan(days: autoDeleteDays)
+                        NSLog("🧹 Periodic auto-delete completed (older than \(autoDeleteDays) days)")
+                    } catch {
+                        NSLog("⚠️ Periodic auto-delete failed: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }

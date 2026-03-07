@@ -85,7 +85,9 @@ private struct ClipboardSettingsPage: View {
     @AppStorage("maxHistoryItems") private var maxHistoryItems = 100
     @AppStorage("pollingInterval") private var pollingInterval = 0.15
     @AppStorage("enableGlobalHotkey") private var enableGlobalHotkey = true
-    @AppStorage("autoDeleteAfterDays") private var autoDeleteAfterDays = 30
+
+    @State private var excludedApps: [ExcludedApp] = []
+    @State private var showAppPicker = false
 
     var body: some View {
         Form {
@@ -119,17 +121,38 @@ private struct ClipboardSettingsPage: View {
                 }
             }
 
-            Section("Cleanup") {
-                LabeledContent("Auto-delete after") {
-                    Stepper(value: $autoDeleteAfterDays, in: 1...365, step: 1) {
-                        Text("\(autoDeleteAfterDays) days")
-                            .monospacedDigit()
+            Section("App Exclusions") {
+                if excludedApps.isEmpty {
+                    Text("No excluded apps")
+                        .foregroundStyle(.tertiary)
+                } else {
+                    ForEach(excludedApps) { app in
+                        HStack(spacing: 8) {
+                            Image(nsImage: app.icon)
+                                .resizable()
+                                .frame(width: 20, height: 20)
+                            Text(app.name)
+                            Spacer()
+                            Button {
+                                removeExclusion(app)
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
+
+                Button("Add App Exclusion...") {
+                    showAppPicker = true
+                }
             }
+
         }
         .formStyle(.grouped)
         .navigationTitle("Clipboard")
+        .onAppear { loadExcludedApps() }
         .onChange(of: pollingInterval) { _, newValue in
             Task {
                 await ClipboardService.shared.restartMonitoring(interval: newValue)
@@ -142,6 +165,123 @@ private struct ClipboardSettingsPage: View {
                 KeyboardShortcuts.disable(.toggleClipFlowOverlay)
             }
         }
+        .sheet(isPresented: $showAppPicker) {
+            AppExclusionPicker { bundleID, name in
+                addExclusion(bundleID: bundleID, name: name)
+                showAppPicker = false
+            } onCancel: {
+                showAppPicker = false
+            }
+        }
+    }
+
+    private func loadExcludedApps() {
+        let bundleIDs = UserDefaults.standard.stringArray(forKey: "excludedAppBundleIDs") ?? []
+        excludedApps = bundleIDs.map { bundleID in
+            let name = UserDefaults.standard.string(forKey: "excludedAppName_\(bundleID)") ?? bundleID
+            let icon = NSWorkspace.shared.icon(forFile:
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)?.path ?? "/System"
+            )
+            return ExcludedApp(bundleID: bundleID, name: name, icon: icon)
+        }
+    }
+
+    private func addExclusion(bundleID: String, name: String) {
+        var ids = UserDefaults.standard.stringArray(forKey: "excludedAppBundleIDs") ?? []
+        guard !ids.contains(bundleID) else { return }
+        ids.append(bundleID)
+        UserDefaults.standard.set(ids, forKey: "excludedAppBundleIDs")
+        UserDefaults.standard.set(name, forKey: "excludedAppName_\(bundleID)")
+        loadExcludedApps()
+    }
+
+    private func removeExclusion(_ app: ExcludedApp) {
+        var ids = UserDefaults.standard.stringArray(forKey: "excludedAppBundleIDs") ?? []
+        ids.removeAll { $0 == app.bundleID }
+        UserDefaults.standard.set(ids, forKey: "excludedAppBundleIDs")
+        UserDefaults.standard.removeObject(forKey: "excludedAppName_\(app.bundleID)")
+        loadExcludedApps()
+    }
+}
+
+// MARK: - App Exclusion Model & Picker
+
+private struct ExcludedApp: Identifiable {
+    let bundleID: String
+    let name: String
+    let icon: NSImage
+    var id: String { bundleID }
+}
+
+private struct AppExclusionPicker: View {
+    let onSelect: (String, String) -> Void
+    let onCancel: () -> Void
+
+    @State private var runningApps: [ExcludedApp] = []
+    @State private var searchText = ""
+
+    private var filteredApps: [ExcludedApp] {
+        if searchText.isEmpty { return runningApps }
+        return runningApps.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            $0.bundleID.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Select App to Exclude")
+                    .font(.headline)
+                Spacer()
+                Button("Cancel") { onCancel() }
+                    .buttonStyle(.plain)
+            }
+            .padding()
+
+            TextField("Search apps...", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal)
+
+            List(filteredApps) { app in
+                Button {
+                    onSelect(app.bundleID, app.name)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(nsImage: app.icon)
+                            .resizable()
+                            .frame(width: 24, height: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(app.name)
+                            Text(app.bundleID)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+        }
+        .frame(width: 400, height: 400)
+        .onAppear { loadRunningApps() }
+    }
+
+    private func loadRunningApps() {
+        let excluded = UserDefaults.standard.stringArray(forKey: "excludedAppBundleIDs") ?? []
+        let apps = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != nil }
+            .filter { !excluded.contains($0.bundleIdentifier!) }
+            .compactMap { app -> ExcludedApp? in
+                guard let bundleID = app.bundleIdentifier else { return nil }
+                return ExcludedApp(
+                    bundleID: bundleID,
+                    name: app.localizedName ?? bundleID,
+                    icon: app.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
+                )
+            }
+            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+        runningApps = apps
     }
 }
 
@@ -151,6 +291,26 @@ private struct StorageSettingsPage: View {
     @State private var itemCount: Int?
     @State private var storageStats: StorageStatistics?
     @State private var isLoading = false
+    @AppStorage("autoDeleteAfterDays") private var autoDeleteAfterDays = 0
+
+    private let historyOptions: [(String, Int)] = [
+        ("Day", 1), ("Week", 7), ("Month", 30), ("Year", 365), ("Forever", 0)
+    ]
+
+    private var historySliderIndex: Binding<Double> {
+        Binding(
+            get: {
+                Double(historyOptions.firstIndex(where: { $0.1 == autoDeleteAfterDays })
+                    ?? historyOptions.count - 1)
+            },
+            set: {
+                let idx = Int($0.rounded())
+                if idx >= 0 && idx < historyOptions.count {
+                    autoDeleteAfterDays = historyOptions[idx].1
+                }
+            }
+        )
+    }
 
     var body: some View {
         Form {
@@ -166,6 +326,32 @@ private struct StorageSettingsPage: View {
                     Spacer()
                     Button("Clear All Data", role: .destructive) { clearAllData() }
                 }
+            }
+
+            Section("Keep History") {
+                VStack(spacing: 8) {
+                    Slider(
+                        value: historySliderIndex,
+                        in: 0...Double(historyOptions.count - 1),
+                        step: 1
+                    )
+                    .tint(.purple)
+
+                    HStack {
+                        ForEach(Array(historyOptions.enumerated()), id: \.offset) { _, option in
+                            Text(option.0)
+                                .font(.caption2)
+                                .foregroundStyle(
+                                    autoDeleteAfterDays == option.1 ? .primary : .tertiary
+                                )
+                                .fontWeight(autoDeleteAfterDays == option.1 ? .semibold : .regular)
+                            if option.1 != 0 { Spacer() }
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+
+                Button("Erase History...", role: .destructive) { clearAllData() }
             }
 
             Section("Statistics") {

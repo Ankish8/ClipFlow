@@ -103,6 +103,20 @@ public class ClipboardService: ClipboardServiceAPI {
         }
     }
 
+    // MARK: - Pause / Resume (user-facing)
+
+    public func pauseMonitoring() {
+        monitorService.userPause()
+    }
+
+    public func resumeMonitoring() {
+        monitorService.userResume()
+    }
+
+    public var isPaused: Bool {
+        monitorService.isUserPausedState
+    }
+
     public func getCurrentClipboard() async -> ClipboardItem? {
         return await performanceMonitor.measure(operation: "get_current_clipboard") {
             await monitorService.forceCheck()

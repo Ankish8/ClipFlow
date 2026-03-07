@@ -9,6 +9,7 @@ struct ClipboardCardView: View {
     let index: Int
     let isSelected: Bool
     let viewModel: ClipboardViewModel
+    var onSelect: (() -> Void)? = nil
     private let contentTypeInfo: ContentTypeInfo
 
     @State private var cachedImagePath: String? = nil
@@ -40,11 +41,13 @@ struct ClipboardCardView: View {
     init(item: ClipboardItem,
          index: Int,
          isSelected: Bool,
-         viewModel: ClipboardViewModel) {
+         viewModel: ClipboardViewModel,
+         onSelect: (() -> Void)? = nil) {
         self.item = item
         self.index = index
         self.isSelected = isSelected
         self.viewModel = viewModel
+        self.onSelect = onSelect
         self.contentTypeInfo = ContentTypeInfo.from(item.content)
     }
 
@@ -82,13 +85,9 @@ struct ClipboardCardView: View {
                 isHoveringHeader: $isHoveringHeader
             )
         }
-        .onTapGesture(count: 2) {
-            // Double-click to paste; Shift+double-click pastes as plain text
-            if NSEvent.modifierFlags.contains(.shift) {
-                pasteAsPlainAndHideOverlay()
-            } else {
-                pasteAndHideOverlay()
-            }
+        .onTapGesture {
+            // Single tap selects — fires instantly with no double-tap disambiguation delay
+            onSelect?()
         }
         .contextMenu {
             cardContextMenu
@@ -467,12 +466,16 @@ struct ClipboardCardView: View {
 
             Divider()
 
-            // Edit — text and link items
+            // Edit — text, link, code, and snippet items
             switch item.content {
             case .text:
                 Button("Edit") { openEditWindow() }
             case .link:
                 Button("Edit") { openLinkEditWindow() }
+            case .code:
+                Button("Edit") { openCodeEditWindow() }
+            case .snippet:
+                Button("Edit") { openSnippetEditWindow() }
             default:
                 EmptyView()
             }
@@ -565,6 +568,44 @@ struct ClipboardCardView: View {
         }
         let win = makeStandaloneWindow(NSHostingController(rootView: view),
                                        title: "Edit Item", size: NSSize(width: 560, height: 380))
+        Self.editWindowStore[id] = win
+        showStandaloneWindow(win)
+    }
+
+    private func openCodeEditWindow() {
+        guard case .code(let c) = item.content else { return }
+        let id = item.id
+        Self.editWindowStore[id]?.close()
+        let capturedItem = item
+        let view = EditWindowView(text: c.code) { savedText in
+            viewModel.updateItemCode(capturedItem, newText: savedText)
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
+        } onCancel: {
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
+        }
+        let win = makeStandaloneWindow(NSHostingController(rootView: view),
+                                       title: "Edit Code", size: NSSize(width: 620, height: 440))
+        Self.editWindowStore[id] = win
+        showStandaloneWindow(win)
+    }
+
+    private func openSnippetEditWindow() {
+        guard case .snippet(let c) = item.content else { return }
+        let id = item.id
+        Self.editWindowStore[id]?.close()
+        let capturedItem = item
+        let view = EditWindowView(text: c.content) { savedText in
+            viewModel.updateItemSnippet(capturedItem, newText: savedText)
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
+        } onCancel: {
+            Self.editWindowStore[id]?.close()
+            Self.editWindowStore.removeValue(forKey: id)
+        }
+        let win = makeStandaloneWindow(NSHostingController(rootView: view),
+                                       title: "Edit Snippet", size: NSSize(width: 560, height: 380))
         Self.editWindowStore[id] = win
         showStandaloneWindow(win)
     }
@@ -1386,6 +1427,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             case .text(let c):
                 pbItem.setString(c.plainText, forType: .string)
             case .richText(let c):
+                pbItem.setData(c.rtfData, forType: .rtf)
                 pbItem.setString(c.plainTextFallback, forType: .string)
             case .link(let c):
                 let s = c.url.absoluteString
@@ -1398,9 +1440,10 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             case .snippet(let c):
                 pbItem.setString(c.content, forType: .string)
             case .file(let c):
-                if let url = c.urls.first {
-                    pbItem.setString(url.absoluteString, forType: .fileURL)
-                    pbItem.setPropertyList([url.path], forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
+                // Drag all file URLs (not just the first)
+                if !c.urls.isEmpty {
+                    pbItem.setString(c.urls.first!.absoluteString, forType: .fileURL)
+                    pbItem.setPropertyList(c.urls.map(\.path), forType: NSPasteboard.PasteboardType("NSFilenamesPboardType"))
                 }
             case .multiple(let c):
                 for subItem in c.items {

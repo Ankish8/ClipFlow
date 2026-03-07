@@ -227,32 +227,6 @@ final class AccessibilityManager: ObservableObject {
         UserDefaults.standard.set(hasAccessibilityPermission, forKey: "AccessibilityPermissionGranted")
     }
 
-    // MARK: - Application Context Detection
-
-    func isPasswordManagerActive() async -> Bool {
-        guard let frontApp = await getFrontmostApplication(),
-              let bundleId = frontApp.bundleIdentifier else {
-            return false
-        }
-
-        let passwordManagerBundles = [
-            "com.1password.1password7",
-            "com.agilebits.onepassword7",
-            "com.bitwarden.desktop",
-            "com.lastpass.LastPass",
-            "com.dashlane.Dashlane",
-            "net.shinyfrog.bear",
-            "com.apple.keychainaccess"
-        ]
-
-        return passwordManagerBundles.contains(bundleId)
-    }
-
-    func shouldSuppressClipboardMonitoring() async -> Bool {
-        // Suppress monitoring when password managers are active
-        return await isPasswordManagerActive()
-    }
-
     // MARK: - Graceful Degradation
 
     func getAvailableFeatures() -> [String] {

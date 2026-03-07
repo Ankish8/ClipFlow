@@ -6,6 +6,9 @@ struct ClipboardOverlayView: View {
     @State private var selectedIndex: Int = 0
     @State private var selectedTagIds: Set<UUID> = []
 
+    // Quick Look state
+    @State private var showQuickLook = false
+
     // Search state — raw text from the search field
     @State private var searchText = ""
     // Debounced text actually used for filtering (updated 80ms after last keystroke)
@@ -127,6 +130,16 @@ struct ClipboardOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background { Color.clear }
         .overlayPanel(cornerRadius: 32)
+        .onChange(of: selectedIndex) { _, newIndex in
+            // Update Quick Look panel with new selection instead of dismissing
+            if showQuickLook, newIndex < filteredItems.count {
+                NotificationCenter.default.post(
+                    name: .showQuickLookPanel,
+                    object: nil,
+                    userInfo: ["item": filteredItems[newIndex]]
+                )
+            }
+        }
         .onChange(of: searchText) {
             // Debounce: update debouncedSearch 80ms after last keystroke
             searchDebounceTask?.cancel()
@@ -145,6 +158,26 @@ struct ClipboardOverlayView: View {
             let maxIndex = max(filteredItems.count - 1, 0)
             selectedIndex = min(selectedIndex, maxIndex)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayLeft)) { _ in
+            if selectedIndex > 0 { selectedIndex -= 1 }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayRight)) { _ in
+            if selectedIndex < filteredItems.count - 1 { selectedIndex += 1 }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleQuickLook)) { _ in
+            let items = filteredItems
+            guard selectedIndex < items.count else { return }
+            showQuickLook.toggle()
+            if showQuickLook {
+                NotificationCenter.default.post(
+                    name: .showQuickLookPanel,
+                    object: nil,
+                    userInfo: ["item": items[selectedIndex]]
+                )
+            } else {
+                NotificationCenter.default.post(name: .hideQuickLookPanel, object: nil)
+            }
+        }
     }
 
     @Environment(\.colorScheme) private var colorScheme
@@ -162,12 +195,10 @@ struct ClipboardOverlayView: View {
                     item: item,
                     index: index + 1,
                     isSelected: index == selectedIndex,
-                    viewModel: viewModel
+                    viewModel: viewModel,
+                    onSelect: { selectedIndex = index }
                 )
                 .id(item.id)
-                .onTapGesture {
-                    selectedIndex = index
-                }
             }
             if items.count <= 6 {
                 Spacer().frame(minWidth: 0)
@@ -186,6 +217,16 @@ struct ClipboardOverlayView: View {
 
     func closeOverlay() {
         NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+    }
+
+    /// Double-Escape pattern: first Escape dismisses Quick Look panel, second closes overlay.
+    func dismissQuickLookOrClose() {
+        if showQuickLook {
+            showQuickLook = false
+            NotificationCenter.default.post(name: .hideQuickLookPanel, object: nil)
+        } else {
+            closeOverlay()
+        }
     }
 
     // MARK: - Keyboard Navigation Methods
@@ -222,6 +263,22 @@ struct ClipboardOverlayView: View {
             try? await Task.sleep(for: .milliseconds(100))
             NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         }
+    }
+
+    func toggleQuickLook() {
+        showQuickLook.toggle()
+    }
+
+    func editCurrentSelection() {
+        let items = filteredItems
+        guard selectedIndex < items.count else { return }
+        let item = items[selectedIndex]
+        // Post notification that triggers the edit window for this item
+        NotificationCenter.default.post(
+            name: .editClipboardItem,
+            object: nil,
+            userInfo: ["itemId": item.id]
+        )
     }
 
     func deleteCurrentSelection() {
@@ -272,6 +329,12 @@ extension Notification.Name {
     static let pinClipboardItem = Notification.Name("pinClipboardItem")
     static let startDragging = Notification.Name("startDragging")
     static let stopDragging = Notification.Name("stopDragging")
+    static let editClipboardItem = Notification.Name("editClipboardItem")
+    static let toggleQuickLook = Notification.Name("toggleQuickLook")
+    static let showQuickLookPanel = Notification.Name("showQuickLookPanel")
+    static let hideQuickLookPanel = Notification.Name("hideQuickLookPanel")
+    static let navigateOverlayLeft = Notification.Name("navigateOverlayLeft")
+    static let navigateOverlayRight = Notification.Name("navigateOverlayRight")
 }
 
 extension NSApplication {
