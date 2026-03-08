@@ -110,16 +110,13 @@ struct TagChipView: View {
     var body: some View {
         Button(action: handlePrimaryClick) {
             HStack(spacing: 6) {
-                // Tag color indicator - clickable to open color picker
+                // Tag color indicator
                 Circle()
                     .fill(tagColor)
                     .frame(width: 10, height: 10)
                     .overlay {
                         Circle()
                             .stroke(tag.color.indicatorBorderColor(for: colorScheme), lineWidth: 0.75)
-                    }
-                    .onTapGesture {
-                        openColorPicker()
                     }
                     .popover(isPresented: $showColorPicker) {
                         VStack(spacing: 0) {
@@ -129,7 +126,6 @@ struct TagChipView: View {
                         }
                         .frame(width: 220)
                     }
-                    .help("Click to change color")
 
                 // Tag name or inline editor
                 if isRenaming {

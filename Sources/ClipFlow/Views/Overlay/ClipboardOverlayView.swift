@@ -3,10 +3,12 @@ import ClipFlowCore
 
 struct ClipboardOverlayView: View {
     let viewModel: ClipboardViewModel
-    @State private var selectedIndex: Int = 0
-    @State private var selectionAnchor: Int = 0
-    @State private var selectedIndices: Set<Int> = [0]
+    // ID-based selection — stable across pagination/filtering
+    @State private var focusedItemId: UUID?
+    @State private var selectedItemIds: Set<UUID> = []
+    @State private var selectionAnchorId: UUID?
     @State private var selectedTagIds: Set<UUID> = []
+    @State private var selectedContentType: String? = nil  // nil = all types
 
     // Quick Look state
     @State private var showQuickLook = false
@@ -16,6 +18,8 @@ struct ClipboardOverlayView: View {
     // Debounced text actually used for filtering (updated 80ms after last keystroke)
     @State private var debouncedSearch = ""
     @State private var searchDebounceTask: Task<Void, Never>?
+    // Coalesces rapid filter changes into a single DB query
+    @State private var filterCoalesceTask: Task<Void, Never>?
 
     // Default initializer creates its own viewModel (for standalone use)
     init() {
@@ -29,41 +33,37 @@ struct ClipboardOverlayView: View {
         self.viewModel = viewModel
     }
 
-    // MARK: - Derived display data
-    // Computed directly from @Observable viewModel.items + @State filters.
-    // SwiftUI auto-tracks all reads here — no onChange synchronisation needed.
-    // Pinned items sort first; then newest-first (viewModel.items order).
-    private var filteredItems: [ClipboardItem] {
-        var items = viewModel.items
+    // MARK: - Selection Helpers (ID-based)
 
-        if !selectedTagIds.isEmpty {
-            items = items.filter { !$0.tagIds.isDisjoint(with: selectedTagIds) }
+    /// Compute display index of focused item.
+    private var focusedIndex: Int {
+        guard let fid = focusedItemId else { return 0 }
+        return viewModel.items.firstIndex(where: { $0.id == fid }) ?? 0
+    }
+
+    /// Resolve content types for the selected filter chip.
+    private var resolvedContentTypes: [String]? {
+        guard let ct = selectedContentType else { return nil }
+        let matchTypes = ContentTypeFilter.filters.first { $0.id == ct }?.matchTypes
+        return matchTypes.map { Array($0) }
+    }
+
+    /// Push current UI filter state to ViewModel.
+    /// Filters are **exclusive**: content type OR tag, not both.
+    /// Coalesces rapid changes (e.g., toggleTag clears contentType + sets tagIds = 2 onChange fires)
+    /// into a single DB query after a microtask yield.
+    private func pushFilterToViewModel() {
+        filterCoalesceTask?.cancel()
+        filterCoalesceTask = Task { @MainActor in
+            // Yield to let SwiftUI batch all state changes in this event cycle
+            try? await Task.sleep(for: .milliseconds(10))
+            guard !Task.isCancelled else { return }
+            viewModel.applyFilter(
+                tagIds: selectedTagIds.isEmpty ? nil : selectedTagIds,
+                contentTypes: selectedTagIds.isEmpty ? resolvedContentTypes : nil,
+                searchQuery: debouncedSearch.isEmpty ? nil : debouncedSearch
+            )
         }
-
-        if !debouncedSearch.isEmpty {
-            let q = debouncedSearch
-            items = items.filter {
-                $0.content.displayText.localizedCaseInsensitiveContains(q)
-                    || ($0.source.applicationName?.localizedCaseInsensitiveContains(q) ?? false)
-            }
-        }
-
-        // Preserve newest-first ordering from viewModel.items and lift pinned items
-        // with a linear-time stable partition instead of re-sorting every render.
-        var pinnedItems: [ClipboardItem] = []
-        var unpinnedItems: [ClipboardItem] = []
-        pinnedItems.reserveCapacity(items.count)
-        unpinnedItems.reserveCapacity(items.count)
-
-        for item in items {
-            if item.isPinned {
-                pinnedItems.append(item)
-            } else {
-                unpinnedItems.append(item)
-            }
-        }
-
-        return pinnedItems + unpinnedItems
     }
 
     var body: some View {
@@ -77,6 +77,7 @@ struct ClipboardOverlayView: View {
                 TagFilterBarView(
                     viewModel: viewModel,
                     selectedTagIds: $selectedTagIds,
+                    selectedContentType: $selectedContentType,
                     searchText: $searchText
                 )
 
@@ -120,9 +121,11 @@ struct ClipboardOverlayView: View {
                             .frame(width: 32)
                     }
                 }
-                .onChange(of: selectedIndex) { _, newIndex in
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        proxy.scrollTo(newIndex, anchor: .center)
+                .onChange(of: focusedItemId) { _, newId in
+                    if let newId {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo(newId, anchor: .center)
+                        }
                     }
                 }
             }
@@ -132,13 +135,14 @@ struct ClipboardOverlayView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background { Color.clear }
         .overlayPanel(cornerRadius: 32)
-        .onChange(of: selectedIndex) { _, newIndex in
-            // Update Quick Look panel with new selection instead of dismissing
-            if showQuickLook, newIndex < filteredItems.count {
+        .onChange(of: focusedItemId) { _, _ in
+            // Update Quick Look panel with new selection
+            if showQuickLook, let fid = focusedItemId,
+               let item = viewModel.items.first(where: { $0.id == fid }) {
                 NotificationCenter.default.post(
                     name: .showQuickLookPanel,
                     object: nil,
-                    userInfo: ["item": filteredItems[newIndex]]
+                    userInfo: ["item": item]
                 )
             }
         }
@@ -151,64 +155,101 @@ struct ClipboardOverlayView: View {
                 debouncedSearch = searchText
             }
         }
-        .onChange(of: selectedTagIds) { _, newTagIds in
-            viewModel.loadItemsByTag(tagIds: newTagIds)
-            let maxIndex = max(filteredItems.count - 1, 0)
-            selectedIndex = min(selectedIndex, maxIndex)
-            selectionAnchor = selectedIndex
-            selectedIndices = [selectedIndex]
+        .onAppear {
+            // Select first item on appear
+            focusedItemId = viewModel.items.first?.id
+            if let fid = focusedItemId {
+                selectedItemIds = [fid]
+                selectionAnchorId = fid
+            }
+        }
+        .onChange(of: viewModel.items) { _, newItems in
+            // If focused item no longer exists, clamp to first
+            if let fid = focusedItemId, !newItems.contains(where: { $0.id == fid }) {
+                focusedItemId = newItems.first?.id
+                if let fid = focusedItemId {
+                    selectedItemIds = [fid]
+                    selectionAnchorId = fid
+                }
+            }
+            // If no selection, select first
+            if focusedItemId == nil, let first = newItems.first {
+                focusedItemId = first.id
+                selectedItemIds = [first.id]
+                selectionAnchorId = first.id
+            }
+        }
+        .onChange(of: selectedTagIds) { _, _ in
+            pushFilterToViewModel()
         }
         .onChange(of: debouncedSearch) { _, _ in
-            let maxIndex = max(filteredItems.count - 1, 0)
-            selectedIndex = min(selectedIndex, maxIndex)
-            selectionAnchor = selectedIndex
-            selectedIndices = [selectedIndex]
+            pushFilterToViewModel()
+        }
+        .onChange(of: selectedContentType) { _, _ in
+            pushFilterToViewModel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayLeft)) { _ in
-            if selectedIndex > 0 {
-                selectedIndex -= 1
-                selectionAnchor = selectedIndex
-                selectedIndices = [selectedIndex]
-            }
+            navigateLeft()
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayRight)) { _ in
-            if selectedIndex < filteredItems.count - 1 {
-                selectedIndex += 1
-                selectionAnchor = selectedIndex
-                selectedIndices = [selectedIndex]
-            }
+            navigateRight()
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayLeftExtend)) { _ in
-            if selectedIndex > 0 {
-                selectedIndex -= 1
-                selectedIndices = rangeSet(from: selectionAnchor, to: selectedIndex)
+            let idx = focusedIndex
+            if idx > 0 {
+                let newItem = viewModel.items[idx - 1]
+                focusedItemId = newItem.id
+                selectedItemIds = idRangeSet(from: selectionAnchorId, to: newItem.id)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateOverlayRightExtend)) { _ in
-            if selectedIndex < filteredItems.count - 1 {
-                selectedIndex += 1
-                selectedIndices = rangeSet(from: selectionAnchor, to: selectedIndex)
+            let idx = focusedIndex
+            if idx < viewModel.items.count - 1 {
+                let newItem = viewModel.items[idx + 1]
+                focusedItemId = newItem.id
+                selectedItemIds = idRangeSet(from: selectionAnchorId, to: newItem.id)
+                // Trigger load more if near end
+                if idx + 1 >= viewModel.items.count - 3 {
+                    viewModel.loadMore()
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .cardTappedWithShift)) { note in
-            if let index = note.userInfo?["index"] as? Int {
-                selectedIndex = index
-                selectedIndices = rangeSet(from: selectionAnchor, to: index)
+            if let index = note.userInfo?["index"] as? Int,
+               index < viewModel.items.count {
+                let item = viewModel.items[index]
+                focusedItemId = item.id
+                selectedItemIds = idRangeSet(from: selectionAnchorId, to: item.id)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleQuickLook)) { _ in
-            let items = filteredItems
-            guard selectedIndex < items.count else { return }
+            guard let fid = focusedItemId,
+                  let item = viewModel.items.first(where: { $0.id == fid }) else { return }
             showQuickLook.toggle()
             if showQuickLook {
                 NotificationCenter.default.post(
                     name: .showQuickLookPanel,
                     object: nil,
-                    userInfo: ["item": items[selectedIndex]]
+                    userInfo: ["item": item]
                 )
             } else {
                 NotificationCenter.default.post(name: .hideQuickLookPanel, object: nil)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pasteOverlaySelection)) { _ in
+            pasteCurrentSelection()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pasteOverlaySelectionPlain)) { _ in
+            pasteCurrentSelectionPlain()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .deleteOverlaySelection)) { _ in
+            deleteCurrentSelection()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .selectAllOverlayItems)) { _ in
+            selectAllItems()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .togglePinOverlaySelection)) { _ in
+            togglePinCurrentSelection()
         }
     }
 
@@ -217,45 +258,54 @@ struct ClipboardOverlayView: View {
     // MARK: - Card Stack
 
     private var cardStack: some View {
-        let items = Array(filteredItems.enumerated())
-        let selectedItemsList = selectedIndices.sorted().compactMap { idx in
-            idx < filteredItems.count ? filteredItems[idx] : nil
-        }
+        let allItems = viewModel.items
+        let indexedItems = Array(allItems.enumerated())
+        let selectedItemsList = allItems.filter { selectedItemIds.contains($0.id) }
         return LazyHStack(spacing: 16) {
-            if items.count <= 6 {
+            if allItems.count <= 6 {
                 Spacer().frame(minWidth: 0)
             }
-            ForEach(items, id: \.element.id) { index, item in
+            ForEach(indexedItems, id: \.element.id) { index, item in
                 ClipboardCardView(
                     item: item,
                     index: index + 1,
-                    isSelected: selectedIndices.contains(index),
+                    isSelected: selectedItemIds.contains(item.id),
                     viewModel: viewModel,
                     onSelect: {
-                        selectedIndex = index
-                        selectionAnchor = index
-                        selectedIndices = [index]
+                        focusedItemId = item.id
+                        selectionAnchorId = item.id
+                        selectedItemIds = [item.id]
                     },
-                    onShiftSelect: { shiftIndex in
-                        selectedIndex = shiftIndex
-                        selectedIndices = rangeSet(from: selectionAnchor, to: shiftIndex)
+                    onShiftSelect: { _ in
+                        focusedItemId = item.id
+                        selectedItemIds = idRangeSet(from: selectionAnchorId, to: item.id)
                     },
                     selectedItems: selectedItemsList
                 )
                 .id(item.id)
             }
-            if items.count <= 6 {
+            // Infinite scroll sentinel
+            if viewModel.hasMore {
+                Color.clear.frame(width: 1).onAppear {
+                    viewModel.loadMore()
+                }
+            }
+            if allItems.count <= 6 {
                 Spacer().frame(minWidth: 0)
             }
         }
     }
 
-    private func selectAndPaste(_ item: ClipboardItem, index: Int) {
-        selectedIndex = index
-        viewModel.pasteItem(item)
+    private func selectAndPaste(_ item: ClipboardItem) {
+        focusedItemId = item.id
+        selectedItemIds = [item.id]
+        // CRITICAL: Hide overlay FIRST so focus returns to the target app,
+        // then paste after focus restoration completes. Otherwise the
+        // simulated ⌘V keystroke lands on the overlay panel itself.
+        NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         Task {
-            try? await Task.sleep(for: .milliseconds(100))
-            NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+            try? await Task.sleep(for: .milliseconds(250))
+            viewModel.pasteItem(item)
         }
     }
 
@@ -273,69 +323,80 @@ struct ClipboardOverlayView: View {
         }
     }
 
-    // MARK: - Selection Helpers
-
-    private func rangeSet(from a: Int, to b: Int) -> Set<Int> {
-        Set(min(a, b)...max(a, b))
+    /// Build a set of item IDs between two anchor IDs (inclusive range).
+    private func idRangeSet(from anchorId: UUID?, to targetId: UUID) -> Set<UUID> {
+        let items = viewModel.items
+        guard let aid = anchorId,
+              let anchorIdx = items.firstIndex(where: { $0.id == aid }),
+              let targetIdx = items.firstIndex(where: { $0.id == targetId }) else {
+            return [targetId]
+        }
+        let range = min(anchorIdx, targetIdx)...max(anchorIdx, targetIdx)
+        return Set(items[range].map(\.id))
     }
 
     // MARK: - Keyboard Navigation Methods
 
     func navigateLeft() {
-        if selectedIndex > 0 {
-            selectedIndex -= 1
-            selectionAnchor = selectedIndex
-            selectedIndices = [selectedIndex]
+        let idx = focusedIndex
+        if idx > 0 {
+            let item = viewModel.items[idx - 1]
+            focusedItemId = item.id
+            selectionAnchorId = item.id
+            selectedItemIds = [item.id]
         }
     }
 
     func navigateRight() {
-        let count = filteredItems.count
-        if selectedIndex < count - 1 {
-            selectedIndex += 1
-            selectionAnchor = selectedIndex
-            selectedIndices = [selectedIndex]
+        let items = viewModel.items
+        let idx = focusedIndex
+        if idx < items.count - 1 {
+            let item = items[idx + 1]
+            focusedItemId = item.id
+            selectionAnchorId = item.id
+            selectedItemIds = [item.id]
+            // Trigger load more if near end
+            if idx + 1 >= items.count - 3 {
+                viewModel.loadMore()
+            }
         }
     }
 
     func selectByNumber(_ number: Int) {
         let index = number - 1
-        if index >= 0 && index < filteredItems.count {
-            selectedIndex = index
-            selectionAnchor = index
-            selectedIndices = [index]
+        let items = viewModel.items
+        if index >= 0 && index < items.count {
+            let item = items[index]
+            focusedItemId = item.id
+            selectionAnchorId = item.id
+            selectedItemIds = [item.id]
         }
     }
 
     func pasteCurrentSelection() {
-        let items = filteredItems
-        if selectedIndices.count > 1 {
-            // Multi-paste: writes images as temp file URLs (for Finder),
-            // text as concatenated string, then simulates ⌘V.
-            let selectedItems = selectedIndices.sorted().compactMap { idx in
-                idx < items.count ? items[idx] : nil
-            }
+        let items = viewModel.items
+        if selectedItemIds.count > 1 {
+            let selectedItems = items.filter { selectedItemIds.contains($0.id) }
             guard !selectedItems.isEmpty else { return }
-            viewModel.pasteMultipleItems(selectedItems)
+            // Hide overlay first, then paste after focus restores
+            NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
             Task {
-                try? await Task.sleep(for: .milliseconds(100))
-                NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+                try? await Task.sleep(for: .milliseconds(250))
+                viewModel.pasteMultipleItems(selectedItems)
             }
-        } else {
-            guard selectedIndex < items.count else { return }
-            selectAndPaste(items[selectedIndex], index: selectedIndex)
+        } else if let fid = focusedItemId, let item = items.first(where: { $0.id == fid }) {
+            selectAndPaste(item)
         }
     }
 
     /// Paste current selection with formatting stripped (Shift+Return shortcut).
     func pasteCurrentSelectionPlain() {
-        let items = filteredItems
-        guard selectedIndex < items.count else { return }
-        let item = items[selectedIndex]
-        viewModel.pasteItem(item, transform: .removeFormatting)
+        guard let fid = focusedItemId,
+              let item = viewModel.items.first(where: { $0.id == fid }) else { return }
+        NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
         Task {
-            try? await Task.sleep(for: .milliseconds(100))
-            NotificationCenter.default.post(name: .hideClipboardOverlay, object: nil)
+            try? await Task.sleep(for: .milliseconds(250))
+            viewModel.pasteItem(item, transform: .removeFormatting)
         }
     }
 
@@ -343,38 +404,62 @@ struct ClipboardOverlayView: View {
         showQuickLook.toggle()
     }
 
+    func selectAllItems() {
+        let items = viewModel.items
+        guard !items.isEmpty else { return }
+        selectedItemIds = Set(items.map(\.id))
+        // Keep focus on current item, or first if none
+        if focusedItemId == nil {
+            focusedItemId = items.first?.id
+        }
+    }
+
+    func togglePinCurrentSelection() {
+        guard let fid = focusedItemId,
+              let item = viewModel.items.first(where: { $0.id == fid }) else { return }
+        viewModel.togglePin(for: item)
+    }
+
     func editCurrentSelection() {
-        let items = filteredItems
-        guard selectedIndex < items.count else { return }
-        let item = items[selectedIndex]
-        // Post notification that triggers the edit window for this item
+        guard let fid = focusedItemId else { return }
         NotificationCenter.default.post(
             name: .editClipboardItem,
             object: nil,
-            userInfo: ["itemId": item.id]
+            userInfo: ["itemId": fid]
         )
     }
 
     func deleteCurrentSelection() {
-        let items = filteredItems
-        if selectedIndices.count > 1 {
-            // Delete all selected items (reverse order to preserve indices)
-            for idx in selectedIndices.sorted().reversed() {
-                guard idx < items.count else { continue }
-                viewModel.deleteItem(items[idx])
+        let items = viewModel.items
+        if selectedItemIds.count > 1 {
+            for id in selectedItemIds {
+                if let item = items.first(where: { $0.id == id }) {
+                    viewModel.deleteItem(item)
+                }
             }
-            let newIndex = max(0, (selectedIndices.min() ?? 0))
-            selectedIndex = min(newIndex, max(filteredItems.count - 1, 0))
-            selectionAnchor = selectedIndex
-            selectedIndices = [selectedIndex]
-        } else {
-            guard selectedIndex < items.count else { return }
-            viewModel.deleteItem(items[selectedIndex])
-            if selectedIndex >= filteredItems.count && selectedIndex > 0 {
-                selectedIndex -= 1
+            // Select first remaining item
+            focusedItemId = viewModel.items.first?.id
+            if let fid = focusedItemId {
+                selectedItemIds = [fid]
+                selectionAnchorId = fid
+            } else {
+                selectedItemIds = []
             }
-            selectionAnchor = selectedIndex
-            selectedIndices = [selectedIndex]
+        } else if let fid = focusedItemId, let item = items.first(where: { $0.id == fid }) {
+            let idx = focusedIndex
+            viewModel.deleteItem(item)
+            // Select next item or previous
+            let newItems = viewModel.items
+            let newIdx = min(idx, max(newItems.count - 1, 0))
+            if newIdx < newItems.count {
+                let newItem = newItems[newIdx]
+                focusedItemId = newItem.id
+                selectedItemIds = [newItem.id]
+                selectionAnchorId = newItem.id
+            } else {
+                focusedItemId = nil
+                selectedItemIds = []
+            }
         }
     }
 }
@@ -426,6 +511,11 @@ extension Notification.Name {
     static let navigateOverlayLeftExtend = Notification.Name("navigateOverlayLeftExtend")
     static let navigateOverlayRightExtend = Notification.Name("navigateOverlayRightExtend")
     static let cardTappedWithShift = Notification.Name("cardTappedWithShift")
+    static let pasteOverlaySelection = Notification.Name("pasteOverlaySelection")
+    static let pasteOverlaySelectionPlain = Notification.Name("pasteOverlaySelectionPlain")
+    static let deleteOverlaySelection = Notification.Name("deleteOverlaySelection")
+    static let selectAllOverlayItems = Notification.Name("selectAllOverlayItems")
+    static let togglePinOverlaySelection = Notification.Name("togglePinOverlaySelection")
 }
 
 extension NSApplication {

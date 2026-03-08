@@ -18,10 +18,13 @@ struct InlineTagCreator: View {
     @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
-        if isCreating {
+        ZStack {
             creationView
-        } else {
+                .opacity(isCreating ? 1 : 0)
+                .allowsHitTesting(isCreating)
             plusButton
+                .opacity(isCreating ? 0 : 1)
+                .allowsHitTesting(!isCreating)
         }
     }
 

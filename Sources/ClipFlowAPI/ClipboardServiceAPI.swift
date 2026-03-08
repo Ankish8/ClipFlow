@@ -88,6 +88,17 @@ public protocol ClipboardServiceAPI {
     /// Whether the user has paused monitoring
     var isPaused: Bool { get }
 
+    // MARK: Aggregate Queries
+
+    /// Get total item count with optional filter
+    func getItemCount(filter: HistoryFilter?) async throws -> Int
+
+    /// Get content type counts (e.g., ["text": 50, "image": 10])
+    func getContentTypeCounts() async throws -> [String: Int]
+
+    /// Get item counts per tag
+    func getTagItemCounts() async throws -> [UUID: Int]
+
     // MARK: Publishers for Reactive Updates
 
     var itemUpdates: AnyPublisher<ClipboardItem, Never> { get }
@@ -112,6 +123,8 @@ public struct HistoryFilter: Sendable {
     public let isFavorite: Bool?
     public let isPinned: Bool?
     public let isDeleted: Bool?
+    public let tagIds: Set<UUID>?
+    public let searchQuery: String?
 
     public init(
         contentTypes: [String]? = nil,
@@ -119,7 +132,9 @@ public struct HistoryFilter: Sendable {
         dateRange: ClosedRange<Date>? = nil,
         isFavorite: Bool? = nil,
         isPinned: Bool? = nil,
-        isDeleted: Bool? = false
+        isDeleted: Bool? = false,
+        tagIds: Set<UUID>? = nil,
+        searchQuery: String? = nil
     ) {
         self.contentTypes = contentTypes
         self.applications = applications
@@ -127,6 +142,8 @@ public struct HistoryFilter: Sendable {
         self.isFavorite = isFavorite
         self.isPinned = isPinned
         self.isDeleted = isDeleted
+        self.tagIds = tagIds
+        self.searchQuery = searchQuery
     }
 }
 

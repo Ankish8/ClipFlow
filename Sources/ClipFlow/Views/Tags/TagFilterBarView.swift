@@ -4,14 +4,42 @@ import ClipFlowBackend
 import Combine
 
 /// Main tag filter bar view - replaces AppChipBarView
+/// Content type filter definition for Power Search chips
+struct ContentTypeFilter: Identifiable {
+    let id: String       // matches ClipboardContent.contentType
+    let label: String
+    let icon: String
+    let matchTypes: Set<String>  // content types this chip matches (e.g., "text" chip also matches "richText")
+
+    static let filters: [ContentTypeFilter] = [
+        ContentTypeFilter(id: "text", label: "Text", icon: "doc.text",
+                         matchTypes: ["text", "richText"]),
+        ContentTypeFilter(id: "image", label: "Images", icon: "photo",
+                         matchTypes: ["image"]),
+        ContentTypeFilter(id: "link", label: "Links", icon: "link",
+                         matchTypes: ["link"]),
+        ContentTypeFilter(id: "code", label: "Code", icon: "chevron.left.forwardslash.chevron.right",
+                         matchTypes: ["code", "snippet"]),
+        ContentTypeFilter(id: "file", label: "Files", icon: "doc",
+                         matchTypes: ["file"]),
+        ContentTypeFilter(id: "color", label: "Colors", icon: "paintpalette",
+                         matchTypes: ["color"]),
+    ]
+}
+
 struct TagFilterBarView: View {
     var viewModel: ClipboardViewModel
     @Binding var selectedTagIds: Set<UUID>
+    @Binding var selectedContentType: String?
     @Binding var searchText: String
 
     @State private var tags: [Tag] = []
     @State private var tagItemCounts: [UUID: Int] = [:]
     @State private var colorPickerStates: [UUID: Bool] = [:]  // Track color picker state for each tag
+    /// All content types seen in history — cached so tag filtering doesn't hide type chips
+    @State private var allItemTypes: Set<String> = []
+    /// Pre-computed content type counts — avoids O(n) filter per chip on every render
+    @State private var contentTypeCounts: [String: Int] = [:]
 
     // Helper class to hold Combine subscriptions (avoids @State wrapper issues)
     private class SubscriptionHolder {
@@ -34,7 +62,16 @@ struct TagFilterBarView: View {
         .onAppear {
             loadTags()
             calculateItemCounts()
+            updateContentTypeCounts()
             setupSubscriptions()
+        }
+        .onDisappear {
+            subscriptionHolder.cancellables.removeAll()
+            saveTagOrder()
+        }
+        .onChange(of: viewModel.items.count) { _, _ in
+            updateContentTypeCounts()
+            calculateItemCounts()
         }
     }
 
@@ -56,6 +93,12 @@ struct TagFilterBarView: View {
 
                 // Divider
                 divider
+
+                // Content type filter chips (Power Search)
+                contentTypeChips
+
+                // Section divider — visually separates type filters from user tags
+                sectionDivider
 
                 // Tag chips - now with reordering support
                 ForEach(tags) { tag in
@@ -118,9 +161,9 @@ struct TagFilterBarView: View {
     // MARK: - Clipboard History Chip
 
     private var clipboardHistoryChip: some View {
-        let isSelected = selectedTagIds.isEmpty
+        let isSelected = selectedTagIds.isEmpty && selectedContentType == nil
 
-        return Button(action: clearTagFilters) {
+        return Button(action: clearAllFilters) {
             HStack(spacing: 6) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 12, weight: .medium))
@@ -134,11 +177,95 @@ struct TagFilterBarView: View {
         .buttonStyle(.toolbarChip(isSelected: isSelected, tint: .accentColor))
     }
 
+    // MARK: - Content Type Filter Chips
+
+    private var contentTypeChips: some View {
+        ForEach(activeContentTypes) { filter in
+            Button {
+                toggleContentType(filter)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: filter.icon)
+                        .font(.system(size: 11, weight: .medium))
+                    Text(filter.label)
+                        .font(.system(size: 12, weight: isContentTypeSelected(filter) ? .semibold : .medium))
+                    // Show count when selected
+                    if isContentTypeSelected(filter) {
+                        Text("\(contentTypeCount(filter))")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.toolbarChip(
+                isSelected: isContentTypeSelected(filter),
+                tint: .secondary
+            ))
+        }
+    }
+
+    /// Show filter chips for content types present in the full (unfiltered) item list.
+    /// Uses allItemTypes which is cached on appear / item changes, so tag filtering
+    /// (which replaces viewModel.items) doesn't make chips disappear.
+    private var activeContentTypes: [ContentTypeFilter] {
+        ContentTypeFilter.filters.filter { filter in
+            !filter.matchTypes.isDisjoint(with: allItemTypes)
+        }
+    }
+
+    private func isContentTypeSelected(_ filter: ContentTypeFilter) -> Bool {
+        selectedContentType == filter.id
+    }
+
+    private func contentTypeCount(_ filter: ContentTypeFilter) -> Int {
+        contentTypeCounts[filter.id] ?? 0
+    }
+
+    private func updateContentTypeCounts() {
+        Task {
+            do {
+                let rawCounts = try await ClipboardService.shared.getContentTypeCounts()
+                // Map raw content type counts to filter chip IDs
+                var counts: [String: Int] = [:]
+                for filter in ContentTypeFilter.filters {
+                    counts[filter.id] = filter.matchTypes.reduce(0) { sum, type in
+                        sum + (rawCounts[type] ?? 0)
+                    }
+                }
+                contentTypeCounts = counts
+                // Update allItemTypes from raw DB counts
+                allItemTypes = Set(rawCounts.keys)
+            } catch {
+                NSLog("❌ Failed to load content type counts: \(error)")
+            }
+        }
+    }
+
+    private func toggleContentType(_ filter: ContentTypeFilter) {
+        if isContentTypeSelected(filter) {
+            selectedContentType = nil  // Deselect
+        } else {
+            // Clear tags and select content type (exclusive filters)
+            selectedTagIds.removeAll()
+            selectedContentType = filter.id
+        }
+    }
+
     // MARK: - Divider
 
     private var divider: some View {
         Divider()
             .frame(height: 16)
+    }
+
+    /// A slightly thicker, more visible separator between content-type chips and tags
+    private var sectionDivider: some View {
+        RoundedRectangle(cornerRadius: 0.5)
+            .fill(Color.primary.opacity(0.15))
+            .frame(width: 1, height: 20)
+            .padding(.horizontal, 2)
     }
 
     // MARK: - Context Menu
@@ -167,13 +294,15 @@ struct TagFilterBarView: View {
         if selectedTagIds.contains(tagId) {
             selectedTagIds.remove(tagId)
         } else {
-            // Single-select: clear all and select only this tag
+            // Single-select: clear content type and select only this tag
+            selectedContentType = nil
             selectedTagIds = [tagId]
         }
     }
 
-    private func clearTagFilters() {
+    private func clearAllFilters() {
         selectedTagIds.removeAll()
+        selectedContentType = nil
     }
 
     private func handleTagCreated(_ newTag: Tag) {
@@ -294,8 +423,8 @@ struct TagFilterBarView: View {
     private func handleDrop(itemId: UUID, onTag tag: Tag) {
         NSLog("📌 Dropped item \(itemId) on tag: \(tag.name)")
 
-        // Add tag to the dropped item
-        viewModel.addTagToItem(tagId: tag.id, itemId: itemId)
+        // Move item to this tag (removes any existing tags first)
+        viewModel.moveItemToTag(tagId: tag.id, itemId: itemId)
 
         // PERFORMANCE: Removed calculateItemCounts() - it's O(n*m) and too expensive
         // Item counts update when tags are loaded or modified via subscriptions
@@ -303,7 +432,12 @@ struct TagFilterBarView: View {
         // Visual feedback
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
 
-        // Optimistically increment count for this tag (instant visual feedback)
+        // Optimistically update counts: decrement old tags, increment new tag
+        if let item = viewModel.items.first(where: { $0.id == itemId }) {
+            for oldTagId in item.tagIds where oldTagId != tag.id {
+                tagItemCounts[oldTagId] = max(0, (tagItemCounts[oldTagId] ?? 0) - 1)
+            }
+        }
         tagItemCounts[tag.id] = (tagItemCounts[tag.id] ?? 0) + 1
     }
 
@@ -311,8 +445,8 @@ struct TagFilterBarView: View {
 
     private func moveTag(from source: IndexSet, to destination: Int) {
         tags.move(fromOffsets: source, toOffset: destination)
-        saveTagOrder()
-        NSLog("🔄 Reordered tags - new order saved")
+        // saveTagOrder() deferred to .onDisappear to avoid writes on every drag step
+        NSLog("🔄 Reordered tags")
     }
 
     private func saveTagOrder() {
@@ -351,13 +485,12 @@ struct TagFilterBarView: View {
     }
 
     private func calculateItemCounts() {
-        tagItemCounts.removeAll()
-
-        for tag in tags {
-            let count = viewModel.items.filter { item in
-                item.tagIds.contains(tag.id)
-            }.count
-            tagItemCounts[tag.id] = count
+        Task {
+            do {
+                tagItemCounts = try await ClipboardService.shared.getTagItemCounts()
+            } catch {
+                NSLog("❌ Failed to load tag item counts: \(error)")
+            }
         }
     }
 
@@ -388,8 +521,8 @@ struct TagFilterBarView: View {
         // GlassEffectContainer view-hierarchy routing).
         let vm = viewModel
         TagDropCoordinator.shared.onTagApplied = { itemId, tagId in
-            NSLog("📌 TagDropCoordinator: assigning item \(itemId) → tag \(tagId)")
-            vm.addTagToItem(tagId: tagId, itemId: itemId)
+            NSLog("📌 TagDropCoordinator: moving item \(itemId) → tag \(tagId)")
+            vm.moveItemToTag(tagId: tagId, itemId: itemId)
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
     }
@@ -401,6 +534,7 @@ struct TagFilterBarView: View {
     struct PreviewWrapper: View {
         @State private var viewModel = ClipboardViewModel()
         @State private var selectedTagIds: Set<UUID> = []
+        @State private var selectedContentType: String? = nil
         @State private var searchText = ""
 
         var body: some View {
@@ -408,6 +542,7 @@ struct TagFilterBarView: View {
                 TagFilterBarView(
                     viewModel: viewModel,
                     selectedTagIds: $selectedTagIds,
+                    selectedContentType: $selectedContentType,
                     searchText: $searchText
                 )
                 .background(Color.gray.opacity(0.1))

@@ -11,6 +11,7 @@ public actor CacheManager {
     // MARK: - Multi-level cache storage
     private var memoryCache: [UUID: CachedItem] = [:]
     private var hashCache: [String: UUID] = [:] // Hash to UUID mapping for fast lookups
+    private var reverseHashCache: [UUID: String] = [:] // Reverse lookup for O(1) removal
     private var collectionCache: [UUID: Collection] = [:]
     private var accessOrder: LinkedList<UUID> = LinkedList() // Optimized LRU
 
@@ -23,6 +24,9 @@ public actor CacheManager {
     private let maxDiskBytes: Int64 = 500 * 1024 * 1024 // 500MB disk limit
     private let maxItems: Int = 2000 // Increased for better performance
     private let ttlSeconds: TimeInterval = 3600 // 1 hour (longer for better hit rates)
+
+    // Running memory usage counter (avoid O(n) recalculation)
+    private var currentMemoryUsage: Int64 = 0
 
     // Performance metrics
     private var memoryHits: Int = 0
@@ -53,6 +57,7 @@ public actor CacheManager {
         // Update memory cache — always replace stored data so mutations (pin, rename, etc.) are reflected
         if let existingItem = memoryCache[item.id],
            let existingAccessNode = existingItem.accessNode {
+            currentMemoryUsage -= existingItem.item.metadata.size
             accessOrder.moveToTail(node: existingAccessNode)
             cachedItem.accessNode = existingAccessNode  // reuse LRU node
             memoryCache[item.id] = cachedItem           // update stored item data
@@ -61,9 +66,11 @@ public actor CacheManager {
             cachedItem.accessNode = node
             memoryCache[item.id] = cachedItem
         }
+        currentMemoryUsage += item.metadata.size
 
         // Update hash mapping for fast lookups
         hashCache[hash] = item.id
+        reverseHashCache[item.id] = hash
 
         await enforceMemoryLimit()
 
@@ -116,10 +123,13 @@ public actor CacheManager {
         if let cachedItem = memoryCache.removeValue(forKey: id),
            let node = cachedItem.accessNode {
             accessOrder.remove(node: node)
+            currentMemoryUsage -= cachedItem.item.metadata.size
         }
 
-        // Remove from hash cache
-        hashCache = hashCache.filter { $0.value != id }
+        // Remove from hash cache via reverse lookup (O(1) instead of O(n))
+        if let hash = reverseHashCache.removeValue(forKey: id) {
+            hashCache.removeValue(forKey: hash)
+        }
     }
 
     private func promoteToMemory(item: ClipboardItem) async {
@@ -127,6 +137,7 @@ public actor CacheManager {
         let node = accessOrder.append(item.id)
         cachedItem.accessNode = node
         memoryCache[item.id] = cachedItem
+        currentMemoryUsage += item.metadata.size
 
         await enforceMemoryLimit()
     }
@@ -217,9 +228,7 @@ public actor CacheManager {
     }
 
     private func getCurrentMemoryUsage() -> Int64 {
-        return memoryCache.values.reduce(0) { total, cachedItem in
-            total + cachedItem.item.metadata.size
-        }
+        return currentMemoryUsage
     }
 
     // MARK: - Cache Statistics and Monitoring
@@ -263,8 +272,10 @@ public actor CacheManager {
     public func clearCache() async {
         memoryCache.removeAll()
         hashCache.removeAll()
+        reverseHashCache.removeAll()
         collectionCache.removeAll()
         accessOrder = LinkedList()
+        currentMemoryUsage = 0
         memoryHits = 0
         diskHits = 0
         misses = 0
@@ -287,10 +298,13 @@ public actor CacheManager {
         await diskCache.loadMetadata()
     }
 
+    private var cleanupTask: Task<Void, Never>?
+
     private func startCleanupTimer() async {
-        Task {
-            while true {
+        cleanupTask = Task {
+            while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(300)) // 5 minutes
+                guard !Task.isCancelled else { break }
                 await optimize()
             }
         }

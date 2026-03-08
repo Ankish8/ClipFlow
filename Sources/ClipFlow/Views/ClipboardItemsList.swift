@@ -31,11 +31,9 @@ struct ClipboardItemsList: View {
                 .listRowSeparator(.visible)
             }
 
-            if items.count > 0 {
-                LoadMoreButton {
-                    viewModel.loadMore()
-                }
-                .padding(.top, 16)
+            if viewModel.hasMore {
+                Color.clear.frame(height: 1)
+                    .onAppear { viewModel.loadMore() }
             }
         }
         .listStyle(.plain)

@@ -20,6 +20,9 @@ class OverlayManager: ObservableObject {
     // Focus restoration
     private var previousActiveApp: NSRunningApplication?
 
+    // Cached hotkey state to avoid redundant work on every UserDefaults change
+    private var lastHotkeyEnabled: Bool = UserDefaults.standard.object(forKey: "enableGlobalHotkey") as? Bool ?? true
+
     private init() {
         setupNotifications()
         setupKeyboardShortcuts()
@@ -61,14 +64,17 @@ class OverlayManager: ObservableObject {
             self?.toggleOverlay()
         }
 
-        // Observe setting changes at runtime
+        // Observe setting changes at runtime (with cached value check to avoid redundant work)
         NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
             queue: .main
-        ) { _ in
+        ) { [weak self] _ in
             Task { @MainActor in
+                guard let self else { return }
                 let isEnabled = UserDefaults.standard.object(forKey: "enableGlobalHotkey") as? Bool ?? true
+                guard isEnabled != self.lastHotkeyEnabled else { return }
+                self.lastHotkeyEnabled = isEnabled
                 if isEnabled {
                     KeyboardShortcuts.enable(.toggleClipFlowOverlay)
                 } else {
@@ -162,6 +168,11 @@ class OverlayManager: ObservableObject {
 
         let hostingView = BorderlessHostingView(rootView: swiftUIContent)
         overlayWindow?.contentView = hostingView
+    }
+
+    /// Reload the shared ViewModel's data from DB (e.g. after auto-delete).
+    func refreshData() {
+        sharedViewModel.refreshData()
     }
 
     func cleanup() {

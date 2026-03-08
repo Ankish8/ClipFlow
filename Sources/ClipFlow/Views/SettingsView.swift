@@ -148,10 +148,18 @@ private struct ClipboardSettingsPage: View {
 
             Section("Monitoring") {
                 LabeledContent("Max history items") {
-                    Stepper(value: $maxHistoryItems, in: 10...1000, step: 10) {
-                        Text("\(maxHistoryItems)")
-                            .monospacedDigit()
+                    Picker("", selection: $maxHistoryItems) {
+                        Text("100").tag(100)
+                        Text("500").tag(500)
+                        Text("1,000").tag(1000)
+                        Text("5,000").tag(5000)
+                        Text("10,000").tag(10000)
+                        Text("50,000").tag(50000)
+                        Text("100,000").tag(100000)
+                        Text("Unlimited").tag(0)
                     }
+                    .pickerStyle(.menu)
+                    .frame(width: 120)
                 }
 
                 LabeledContent("Monitoring speed") {
@@ -349,7 +357,9 @@ private struct StorageSettingsPage: View {
             set: {
                 let idx = Int($0.rounded())
                 if idx >= 0 && idx < historyOptions.count {
-                    autoDeleteAfterDays = historyOptions[idx].1
+                    let newValue = historyOptions[idx].1
+                    autoDeleteAfterDays = newValue
+                    NSLog("⚙️ Auto-delete setting changed to: \(historyOptions[idx].0) (\(newValue) days)")
                 }
             }
         )
@@ -396,6 +406,11 @@ private struct StorageSettingsPage: View {
                 .padding(.vertical, 4)
 
                 Button("Erase History...", role: .destructive) { clearAllData() }
+            }
+            .onChange(of: autoDeleteAfterDays) { _, newValue in
+                // Force-sync to make sure the value persists immediately
+                UserDefaults.standard.set(newValue, forKey: "autoDeleteAfterDays")
+                NSLog("⚙️ autoDeleteAfterDays persisted to UserDefaults: \(newValue)")
             }
 
             Section("Statistics") {

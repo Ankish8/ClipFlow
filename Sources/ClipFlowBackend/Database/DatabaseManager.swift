@@ -4,10 +4,13 @@ import ClipFlowCore
 
 // MARK: - Database Manager
 
-@MainActor
-public class DatabaseManager {
+public class DatabaseManager: @unchecked Sendable {
     private let dbQueue: DatabaseQueue
     private let migrator: DatabaseMigrator
+
+    // Cached schema checks to avoid querying sqlite_master on every tag operation
+    private var hasItemTagsTable: Bool?
+    private var hasTagIdsColumn: Bool?
 
     public static let shared = DatabaseManager()
 
@@ -330,17 +333,25 @@ public class DatabaseManager {
             }
         }
 
+        migrator.registerMigration("v1.4") { db in
+            // Composite index for pinned-first sorting with filter
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS idx_items_pinned_created
+                ON clipboard_items(is_deleted, is_pinned DESC, created_at DESC)
+            """)
+        }
+
         return migrator
     }
 
     // MARK: - Database Operations
 
-    public func write<T>(_ block: @escaping (Database) throws -> T) async throws -> T {
-        try dbQueue.write(block)
+    public func write<T: Sendable>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
+        try await dbQueue.write(block)
     }
 
-    public func read<T>(_ block: @escaping (Database) throws -> T) async throws -> T {
-        try dbQueue.read(block)
+    public func read<T: Sendable>(_ block: @Sendable @escaping (Database) throws -> T) async throws -> T {
+        try await dbQueue.read(block)
     }
 
     // MARK: - Clipboard Items
@@ -467,7 +478,7 @@ public class DatabaseManager {
                 arguments.append(contentsOf: filterArgs)
             }
 
-            sql += " ORDER BY "
+            sql += " ORDER BY is_pinned DESC, "
             sql += (filter?.sortBy == .lastAccessed) ? "accessed_at DESC" : "created_at DESC"
             sql += " LIMIT ? OFFSET ?"
 
@@ -719,18 +730,26 @@ public class DatabaseManager {
 
     // MARK: - Tag-Item Relationships
 
-    public func addTagToItem(tagId: UUID, itemId: UUID) async throws {
-        try await write { db in
-            let hasItemTagsTable = try Bool.fetchOne(db, sql: """
-                SELECT COUNT(*) > 0 FROM sqlite_master
-                WHERE type='table' AND name='item_tags'
-            """) ?? false
-            let hasTagIdsColumn = (try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM pragma_table_info('clipboard_items') WHERE name = 'tag_ids'"
-            ) ?? 0) > 0
+    private func checkSchemaOnce(_ db: Database) throws -> (hasItemTags: Bool, hasTagIds: Bool) {
+        if let t = hasItemTagsTable, let c = hasTagIdsColumn { return (t, c) }
+        let t = try Bool.fetchOne(db, sql: """
+            SELECT COUNT(*) > 0 FROM sqlite_master
+            WHERE type='table' AND name='item_tags'
+        """) ?? false
+        let c = (try Int.fetchOne(
+            db,
+            sql: "SELECT COUNT(*) FROM pragma_table_info('clipboard_items') WHERE name = 'tag_ids'"
+        ) ?? 0) > 0
+        hasItemTagsTable = t
+        hasTagIdsColumn = c
+        return (t, c)
+    }
 
-            if hasItemTagsTable {
+    public func addTagToItem(tagId: UUID, itemId: UUID) async throws {
+        try await write { [self] db in
+            let schema = try self.checkSchemaOnce(db)
+
+            if schema.hasItemTags {
                 try db.execute(sql: """
                     INSERT OR IGNORE INTO item_tags (item_id, tag_id, added_at)
                     VALUES (?, ?, ?)
@@ -738,7 +757,7 @@ public class DatabaseManager {
             }
 
             // Update denormalized tag_ids in clipboard_items
-            if hasTagIdsColumn,
+            if schema.hasTagIds,
                let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
                 var clipboardItem = try item.toClipboardItem()
                 clipboardItem.tagIds.insert(tagId)
@@ -752,24 +771,17 @@ public class DatabaseManager {
     }
 
     public func removeTagFromItem(tagId: UUID, itemId: UUID) async throws {
-        try await write { db in
-            let hasItemTagsTable = try Bool.fetchOne(db, sql: """
-                SELECT COUNT(*) > 0 FROM sqlite_master
-                WHERE type='table' AND name='item_tags'
-            """) ?? false
-            let hasTagIdsColumn = (try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM pragma_table_info('clipboard_items') WHERE name = 'tag_ids'"
-            ) ?? 0) > 0
+        try await write { [self] db in
+            let schema = try self.checkSchemaOnce(db)
 
-            if hasItemTagsTable {
+            if schema.hasItemTags {
                 try db.execute(sql: """
                     DELETE FROM item_tags WHERE item_id = ? AND tag_id = ?
                 """, arguments: [itemId.uuidString, tagId.uuidString])
             }
 
             // Update denormalized tag_ids in clipboard_items
-            if hasTagIdsColumn,
+            if schema.hasTagIds,
                let item = try ClipboardItemRecord.fetchOne(db, key: itemId.uuidString) {
                 var clipboardItem = try item.toClipboardItem()
                 clipboardItem.tagIds.remove(tagId)
@@ -806,6 +818,104 @@ public class DatabaseManager {
         }
     }
 
+    // MARK: - Aggregate Queries
+
+    public func getItemCount(filter: ItemFilter? = nil) async throws -> Int {
+        try await read { db in
+            var sql = "SELECT COUNT(*) FROM clipboard_items WHERE is_deleted = 0"
+            var arguments: [DatabaseValueConvertible] = []
+
+            if let filter = filter {
+                let (filterSQL, filterArgs) = filter.buildSQL()
+                if !filterSQL.isEmpty {
+                    sql += " AND " + filterSQL
+                    arguments.append(contentsOf: filterArgs)
+                }
+            }
+
+            return try Int.fetchOne(db, sql: sql, arguments: StatementArguments(arguments)) ?? 0
+        }
+    }
+
+    public func getContentTypeCounts() async throws -> [String: Int] {
+        try await read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT content_type, COUNT(*) as cnt
+                FROM clipboard_items
+                WHERE is_deleted = 0
+                GROUP BY content_type
+            """)
+            var result: [String: Int] = [:]
+            for row in rows {
+                let contentType: String = row["content_type"]
+                let count: Int = row["cnt"]
+                result[contentType] = count
+            }
+            return result
+        }
+    }
+
+    public func getTagItemCounts() async throws -> [UUID: Int] {
+        try await read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT it.tag_id, COUNT(*) as cnt
+                FROM item_tags it
+                JOIN clipboard_items ci ON ci.id = it.item_id
+                WHERE ci.is_deleted = 0
+                GROUP BY it.tag_id
+            """)
+            var result: [UUID: Int] = [:]
+            for row in rows {
+                let tagIdString: String = row["tag_id"]
+                let count: Int = row["cnt"]
+                if let uuid = UUID(uuidString: tagIdString) {
+                    result[uuid] = count
+                }
+            }
+            return result
+        }
+    }
+
+    public func getApplicationStats() async throws -> [(bundleId: String, name: String, icon: Data?, count: Int)] {
+        try await read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT
+                    json_extract(source, '$.applicationBundleIdentifier') as bundle_id,
+                    json_extract(source, '$.applicationName') as app_name,
+                    COUNT(*) as cnt
+                FROM clipboard_items
+                WHERE is_deleted = 0
+                    AND json_extract(source, '$.applicationBundleIdentifier') IS NOT NULL
+                GROUP BY bundle_id
+                ORDER BY cnt DESC
+            """)
+            return rows.compactMap { row -> (bundleId: String, name: String, icon: Data?, count: Int)? in
+                guard let bundleId: String = row["bundle_id"] else { return nil }
+                let name: String = row["app_name"] ?? "Unknown"
+                let count: Int = row["cnt"]
+                return (bundleId: bundleId, name: name, icon: nil, count: count)
+            }
+        }
+    }
+
+    public func deleteItemsByFilter(olderThan: Date? = nil, excludePinned: Bool = true) async throws {
+        try await write { db in
+            var sql = "UPDATE clipboard_items SET is_deleted = 1, modified_at = ? WHERE is_deleted = 0"
+            var arguments: [DatabaseValueConvertible] = [Date().timeIntervalSince1970]
+
+            if excludePinned {
+                sql += " AND is_pinned = 0"
+            }
+
+            if let olderThan = olderThan {
+                sql += " AND created_at < ?"
+                arguments.append(olderThan.timeIntervalSince1970)
+            }
+
+            try db.execute(sql: sql, arguments: StatementArguments(arguments))
+        }
+    }
+
     public func getItemsForTag(tagId: UUID) async throws -> [ClipboardItem] {
         try await read { db in
             let itemIds = try String.fetchAll(db, sql: """
@@ -825,15 +935,17 @@ public class DatabaseManager {
 
 // MARK: - Item Filter
 
-public struct ItemFilter {
-    let contentTypes: [String]?
-    let applications: [String]?
-    let dateRange: ClosedRange<Date>?
-    let isFavorite: Bool?
-    let isPinned: Bool?
-    let sortBy: SortOption
+public struct ItemFilter: Sendable {
+    public let contentTypes: [String]?
+    public let applications: [String]?
+    public let dateRange: ClosedRange<Date>?
+    public let isFavorite: Bool?
+    public let isPinned: Bool?
+    public let sortBy: SortOption
+    public let tagIds: Set<UUID>?
+    public let searchQuery: String?
 
-    public enum SortOption {
+    public enum SortOption: Sendable {
         case createdAt, lastAccessed, size, alphabetical
     }
 
@@ -843,7 +955,9 @@ public struct ItemFilter {
         dateRange: ClosedRange<Date>? = nil,
         isFavorite: Bool? = nil,
         isPinned: Bool? = nil,
-        sortBy: SortOption = .createdAt
+        sortBy: SortOption = .createdAt,
+        tagIds: Set<UUID>? = nil,
+        searchQuery: String? = nil
     ) {
         self.contentTypes = contentTypes
         self.applications = applications
@@ -851,6 +965,8 @@ public struct ItemFilter {
         self.isFavorite = isFavorite
         self.isPinned = isPinned
         self.sortBy = sortBy
+        self.tagIds = tagIds
+        self.searchQuery = searchQuery
     }
 
     func buildSQL() -> (String, [DatabaseValueConvertible]) {
@@ -861,6 +977,12 @@ public struct ItemFilter {
             let placeholders = Array(repeating: "?", count: contentTypes.count).joined(separator: ",")
             conditions.append("content_type IN (\(placeholders))")
             arguments.append(contentsOf: contentTypes)
+        }
+
+        if let applications = applications {
+            let placeholders = Array(repeating: "?", count: applications.count).joined(separator: ",")
+            conditions.append("json_extract(source, '$.applicationBundleIdentifier') IN (\(placeholders))")
+            arguments.append(contentsOf: applications)
         }
 
         if let dateRange = dateRange {
@@ -877,6 +999,18 @@ public struct ItemFilter {
         if let isPinned = isPinned {
             conditions.append("is_pinned = ?")
             arguments.append(isPinned)
+        }
+
+        if let tagIds = tagIds, !tagIds.isEmpty {
+            let placeholders = Array(repeating: "?", count: tagIds.count).joined(separator: ",")
+            conditions.append("id IN (SELECT item_id FROM item_tags WHERE tag_id IN (\(placeholders)))")
+            arguments.append(contentsOf: tagIds.map { $0.uuidString })
+        }
+
+        if let searchQuery = searchQuery, !searchQuery.isEmpty {
+            conditions.append("(content_text LIKE ? OR rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?))")
+            arguments.append("%\(searchQuery)%")
+            arguments.append(searchQuery)
         }
 
         return (conditions.joined(separator: " AND "), arguments)

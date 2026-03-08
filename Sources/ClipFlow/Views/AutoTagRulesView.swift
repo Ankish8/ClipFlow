@@ -40,11 +40,12 @@ struct AutoTagRulesView: View {
                 }
                 Spacer()
             } else {
+                let tagNameMap = Dictionary(uniqueKeysWithValues: availableTags.map { ($0.id, $0.name) })
                 List {
                     ForEach(rules) { rule in
                         AutoTagRuleRow(
                             rule: rule,
-                            tagName: availableTags.first(where: { $0.id == rule.tagId })?.name ?? "Unknown",
+                            tagName: tagNameMap[rule.tagId] ?? "Unknown",
                             onToggle: { updated in
                                 AutoTagService.shared.updateRule(updated)
                                 rules = AutoTagService.shared.rules

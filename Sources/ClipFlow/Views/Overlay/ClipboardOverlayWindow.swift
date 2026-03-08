@@ -266,16 +266,29 @@ class ClipboardOverlayWindow: NSPanel {
             }
         }
 
-        // Double-click to paste — handled at AppKit level so single-tap
-        // in SwiftUI fires instantly without gesture disambiguation delay
-        if event.type == .leftMouseDown, event.clickCount == 2 {
-            if NSEvent.modifierFlags.contains(.shift) {
-                overlayView?.pasteCurrentSelectionPlain()
-            } else {
-                overlayView?.pasteCurrentSelection()
+        // Intercept Delete/Backspace ONLY when the search field is empty.
+        // If the user is typing a search, backspace should delete characters normally.
+        // We check the field editor (NSTextView) text to decide.
+        if event.type == .keyDown,
+           (event.keyCode == 51 || event.keyCode == 117), // 51=Backspace, 117=Forward Delete
+           !event.modifierFlags.contains(.command) {
+            let fieldEditorText = (firstResponder as? NSTextView)?.string ?? ""
+            if fieldEditorText.isEmpty {
+                NotificationCenter.default.post(name: .deleteOverlaySelection, object: nil)
+                return // swallow — don't pass to TextField
             }
+        }
+
+        // Cmd+A: select all cards (intercept before TextField selects all text)
+        if event.type == .keyDown, event.keyCode == 0, // 0 = A key
+           event.modifierFlags.contains(.command) {
+            NotificationCenter.default.post(name: .selectAllOverlayItems, object: nil)
             return
         }
+
+        // Double-click to paste is handled by CardDragView.mouseUp (not here)
+        // because overlayView is a stored struct copy whose @State is disconnected
+        // from SwiftUI's live state. The CardDragView has direct access to the item.
 
         switch event.type {
         case .leftMouseDown:
@@ -342,11 +355,11 @@ class ClipboardOverlayWindow: NSPanel {
         case 53: // Escape — dismiss Quick Look first, then overlay
             overlayView.dismissQuickLookOrClose()
 
-        case 36: // Enter/Return
+        case 36: // Enter/Return — use notifications so the live SwiftUI view handles it
             if event.modifierFlags.contains(.shift) {
-                overlayView.pasteCurrentSelectionPlain()
+                NotificationCenter.default.post(name: .pasteOverlaySelectionPlain, object: nil)
             } else {
-                overlayView.pasteCurrentSelection()
+                NotificationCenter.default.post(name: .pasteOverlaySelection, object: nil)
             }
 
         case 123: // Left arrow
@@ -375,6 +388,15 @@ class ClipboardOverlayWindow: NSPanel {
             // Only trigger when not typing in search field
             if !(firstResponder is NSTextView) {
                 overlayView.editCurrentSelection()
+            } else {
+                super.keyDown(with: event)
+            }
+
+        case 35: // P key — toggle pin on focused card
+            if let fieldEditor = firstResponder as? NSTextView, fieldEditor.string.isEmpty {
+                NotificationCenter.default.post(name: .togglePinOverlaySelection, object: nil)
+            } else if !(firstResponder is NSTextView) {
+                NotificationCenter.default.post(name: .togglePinOverlaySelection, object: nil)
             } else {
                 super.keyDown(with: event)
             }

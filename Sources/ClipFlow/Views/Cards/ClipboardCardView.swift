@@ -94,10 +94,13 @@ struct ClipboardCardView: View {
                 cardIndex: index - 1,
                 nsImage: cachedNSImage,
                 fileURL: cachedImagePath.map { URL(fileURLWithPath: $0) },
-                dragThumbnail: dragThumbnail,
+                dragThumbnail: $dragThumbnail,
+                buildThumbnail: buildDragThumbnail,
                 selectedItems: selectedItems,
                 onSelect: onSelect,
                 onShiftSelect: onShiftSelect,
+                onDoubleClick: { pasteAndHideOverlay() },
+                onShiftDoubleClick: { pasteAsPlainAndHideOverlay() },
                 isHoveringHeader: $isHoveringHeader
             )
         }
@@ -123,11 +126,6 @@ struct ClipboardCardView: View {
                     let image = NSImage(data: iconData).map { Image(nsImage: $0) }
                     await MainActor.run { cachedAppIcon = image }
                 }
-            }
-
-            // Defer thumbnail rendering so tag/filter changes can paint immediately.
-            DispatchQueue.main.async {
-                buildDragThumbnail()
             }
 
             // Decode NSImage and write temp file — both needed before the user drags.
@@ -164,23 +162,19 @@ struct ClipboardCardView: View {
         dragThumbnail = renderer.nsImage
     }
 
-    private var liveItem: ClipboardItem {
-        viewModel.items.first(where: { $0.id == item.id }) ?? item
-    }
-
     private var availableTags: [Tag] {
         TagService.shared.getAllTags()
     }
 
     private var appliedTags: [Tag] {
-        let tagIds = liveItem.tagIds
+        let tagIds = item.tagIds
         return availableTags.filter { tagIds.contains($0.id) }
     }
 
     private var primaryTag: Tag? {
-        let tagIds = liveItem.tagIds
+        let tagIds = item.tagIds
 
-        if let preferredTagId = viewModel.preferredTintTagId(for: liveItem.id, among: tagIds),
+        if let preferredTagId = viewModel.preferredTintTagId(for: item.id, among: tagIds),
            let preferredTag = availableTags.first(where: { $0.id == preferredTagId }) {
             return preferredTag
         }
@@ -486,8 +480,8 @@ struct ClipboardCardView: View {
 
             Divider()
 
-            Button(liveItem.isPinned ? "Unpin" : "Pin") {
-                viewModel.setPinned(!liveItem.isPinned, for: liveItem)
+            Button(item.isPinned ? "Unpin" : "Pin") {
+                viewModel.setPinned(!item.isPinned, for: item)
             }
 
             Button("Preview") {
@@ -1104,10 +1098,13 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
     let cardIndex: Int
     let nsImage: NSImage?       // Pre-decoded image; nil for non-image cards
     let fileURL: URL?           // Pre-written temp file; nil for non-image cards
-    let dragThumbnail: NSImage? // Full card snapshot via ImageRenderer
+    @Binding var dragThumbnail: NSImage? // Lazy — built on first drag attempt
+    let buildThumbnail: () -> Void      // Trigger to build if nil
     let selectedItems: [ClipboardItem]
     var onSelect: (() -> Void)?
     var onShiftSelect: ((Int) -> Void)?
+    var onDoubleClick: (() -> Void)?
+    var onShiftDoubleClick: (() -> Void)?
     @Binding var isHoveringHeader: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -1118,6 +1115,8 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         v.cardIndex = cardIndex
         v.onSelect = onSelect
         v.onShiftSelect = onShiftSelect
+        v.onDoubleClick = onDoubleClick
+        v.onShiftDoubleClick = onShiftDoubleClick
         v.onHeaderHoverChanged = { hovering in
             // mouseMoved is already on the main thread — update binding synchronously.
             // No DispatchQueue.main.async: that would queue one task per mouse frame
@@ -1133,6 +1132,8 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         v.cardIndex = cardIndex
         v.onSelect = onSelect
         v.onShiftSelect = onShiftSelect
+        v.onDoubleClick = onDoubleClick
+        v.onShiftDoubleClick = onShiftDoubleClick
         v.onHeaderHoverChanged = { hovering in
             context.coordinator.parent.isHoveringHeader = hovering
         }
@@ -1195,6 +1196,8 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         var cardIndex: Int = 0
         var onSelect: (() -> Void)?
         var onShiftSelect: ((Int) -> Void)?
+        var onDoubleClick: (() -> Void)?
+        var onShiftDoubleClick: (() -> Void)?
         private var mouseDownPoint: NSPoint = .zero
         private var dragStarted = false
 
@@ -1276,6 +1279,7 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             coord.parent.isHoveringHeader = false
             let curP  = convert(event.locationInWindow, from: nil)
             let startP = convert(windowStartPoint, from: nil)
+            if coord.parent.dragThumbnail == nil { coord.parent.buildThumbnail() }
             let thumbnail = coord.parent.dragThumbnail ?? coord.parent.nsImage ?? blankThumbnail()
             let origin = CGPoint(x: curP.x - startP.x, y: curP.y - startP.y)
             let draggingItems = buildDraggingItems(for: coord.parent, at: origin, thumbnail: thumbnail)
@@ -1311,7 +1315,8 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
             // hover UI so the pin button cannot steal follow-up mouse handling.
             coord.parent.isHoveringHeader = false
 
-            // Use the pre-rendered full-card thumbnail; fall back to image or blank
+            // Build thumbnail lazily on first drag
+            if coord.parent.dragThumbnail == nil { coord.parent.buildThumbnail() }
             let thumbnail = coord.parent.dragThumbnail
                 ?? coord.parent.nsImage
                 ?? blankThumbnail()
@@ -1324,6 +1329,16 @@ private struct AppKitCardDragOverlay: NSViewRepresentable {
         override func mouseUp(with event: NSEvent) {
             dragStarted = false
             TagDragSessionState.isDraggingCard = false
+            // Double-click to paste: detected here (not in sendEvent) because
+            // this view has direct access to the clipboard item via coordinator.
+            if event.clickCount == 2 {
+                if event.modifierFlags.contains(.shift) {
+                    onShiftDoubleClick?()
+                } else {
+                    onDoubleClick?()
+                }
+                return  // Don't forward — prevents SwiftUI from also handling this
+            }
             super.mouseUp(with: event)
         }
 

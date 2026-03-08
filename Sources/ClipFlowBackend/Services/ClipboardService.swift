@@ -388,16 +388,7 @@ public class ClipboardService: ClipboardServiceAPI {
 
     public func clearHistory(olderThan date: Date?) async throws {
         try await performanceMonitor.measure(operation: "clear_history") {
-            let cutoffDate = date ?? Date.distantPast
-            let filter = HistoryFilter(
-                dateRange: cutoffDate...Date.distantFuture,
-                isDeleted: false
-            )
-
-            let items = try await getHistory(offset: 0, limit: Int.max, filter: filter)
-            let idsToDelete = items.map { $0.id }
-
-            try await deleteItems(ids: idsToDelete)
+            try await storageService.deleteItemsByFilter(olderThan: date, excludePinned: true)
         }
     }
 
@@ -506,6 +497,24 @@ public class ClipboardService: ClipboardServiceAPI {
                 return []
             }
         }
+    }
+
+    // MARK: - Aggregate Queries
+
+    public func getItemCount(filter: HistoryFilter? = nil) async throws -> Int {
+        try await storageService.getItemCount(filter: convertToItemFilter(filter))
+    }
+
+    public func getContentTypeCounts() async throws -> [String: Int] {
+        try await storageService.getContentTypeCounts()
+    }
+
+    public func getTagItemCounts() async throws -> [UUID: Int] {
+        try await storageService.getTagItemCounts()
+    }
+
+    public func getApplicationStats() async throws -> [(bundleId: String, name: String, icon: Data?, count: Int)] {
+        try await storageService.getApplicationStats()
     }
 
     // MARK: - Private Helpers
@@ -622,7 +631,9 @@ public class ClipboardService: ClipboardServiceAPI {
             applications: filter.applications,
             dateRange: filter.dateRange,
             isFavorite: filter.isFavorite,
-            isPinned: filter.isPinned
+            isPinned: filter.isPinned,
+            tagIds: filter.tagIds,
+            searchQuery: filter.searchQuery
         )
     }
 

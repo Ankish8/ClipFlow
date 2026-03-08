@@ -47,7 +47,12 @@ public struct ClipboardItem: Codable, Identifiable, Hashable, Sendable {
     }
 
     public static func == (lhs: ClipboardItem, rhs: ClipboardItem) -> Bool {
-        lhs.id == rhs.id
+        lhs.id == rhs.id &&
+        lhs.tagIds == rhs.tagIds &&
+        lhs.isPinned == rhs.isPinned &&
+        lhs.isFavorite == rhs.isFavorite &&
+        lhs.metadata.hash == rhs.metadata.hash &&
+        lhs.timestamps.modifiedAt == rhs.timestamps.modifiedAt
     }
     
 }

@@ -35,8 +35,12 @@ public class ClipboardMonitorService {
     private let storageService: StorageService
     private let performanceMonitor: PerformanceMonitor
 
+    // Icon cache per bundle ID
+    private static var iconCache: [String: Data] = [:]
+
     // Statistics
     private var totalItemsProcessed: Int = 0
+    private var capturesSinceLastEnforce: Int = 0
     private var detectionErrors: Int = 0
     private var lastDetectionTime: Date?
 
@@ -75,7 +79,10 @@ public class ClipboardMonitorService {
             self.lastChangeCount = NSPasteboard.general.changeCount
 
             await MainActor.run {
-                self.timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+                self.timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                    guard let self else { return }
+                    // Early return before creating a Task if paused
+                    guard !self.isMonitoringPaused && !self.isUserPaused else { return }
                     Task {
                         await self.checkClipboard()
                     }
@@ -104,18 +111,15 @@ public class ClipboardMonitorService {
 
     public func pauseMonitoring() {
         isMonitoringPaused = true
-        NSLog("⏸️ Clipboard monitoring paused (internal write)")
     }
 
     public func resumeMonitoring() {
         isMonitoringPaused = false
-        NSLog("▶️ Clipboard monitoring resumed")
     }
 
     public func userPause() {
         isUserPaused = true
         statusSubject.send(.paused)
-        NSLog("⏸️ Clipboard monitoring paused by user")
     }
 
     public func userResume() {
@@ -123,12 +127,10 @@ public class ClipboardMonitorService {
         lastChangeCount = NSPasteboard.general.changeCount
         isUserPaused = false
         statusSubject.send(.monitoring)
-        NSLog("▶️ Clipboard monitoring resumed by user (changeCount synced to \(lastChangeCount))")
     }
 
     public func notifyInternalWrite(hash: String) {
         lastInternalWriteHash = hash
-        NSLog("📝 Notified of internal write with hash: \(hash.prefix(16))...")
     }
 
     public func forceCheck() async -> ClipboardItem? {
@@ -156,7 +158,6 @@ public class ClipboardMonitorService {
     private func checkClipboard(force: Bool = false) async -> ClipboardItem? {
         // Skip if monitoring is paused (internal write in progress or user pause)
         guard !isMonitoringPaused else {
-            NSLog("⏸️ Skipping clipboard check - monitoring paused (internal)")
             return nil
         }
         guard !isUserPaused else {
@@ -183,39 +184,29 @@ public class ClipboardMonitorService {
             let frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
             let excludedApps = UserDefaults.standard.stringArray(forKey: "excludedAppBundleIDs") ?? []
             if excludedApps.contains(frontApp) {
-                NSLog("🚫 Skipping clipboard from excluded app: \(frontApp)")
                 return nil
             }
 
             // Process clipboard content
-            NSLog("🚀 About to call processClipboardContent")
             guard let item = await processClipboardContent(pasteboard) else {
-                NSLog("❌ processClipboardContent returned nil")
                 return nil
             }
-            NSLog("✅ processClipboardContent returned successfully with item: \(item.content.contentType)")
 
             // Check for internal write (our own paste/copy action)
             if let internalHash = lastInternalWriteHash, item.metadata.hash == internalHash {
-                NSLog("🔄 Detected internal write - skipping (hash: \(internalHash.prefix(16))...)")
                 lastInternalWriteHash = nil  // Clear after use
                 lastHash = item.metadata.hash  // Update lastHash to prevent future duplicates
                 return nil
             }
 
             // Check for duplicates
-            NSLog("🔍 Checking duplicates: force=\(force), lastHash=\(lastHash), newHash=\(item.metadata.hash)")
             if !force && item.metadata.hash == lastHash {
-                NSLog("❌ Duplicate detected - skipping item")
                 return nil
             }
             lastHash = item.metadata.hash
-            NSLog("✅ Duplicate check passed")
 
             // Apply security checks
-            NSLog("🔒 About to apply security checks")
             let secureItem = await applySecurityChecks(item)
-            NSLog("✅ Security checks completed")
 
             // Auto-tag: evaluate rules and merge matching tags before storage
             var taggedItem = secureItem
@@ -234,18 +225,19 @@ public class ClipboardMonitorService {
                     isPinned: secureItem.isPinned,
                     isDeleted: secureItem.isDeleted
                 )
-                NSLog("🏷️ Auto-tagged item with \(autoTags.count) tags")
             }
 
             // Store the item
-            NSLog("💾 About to save item to storage")
             let persistedItem = try await storageService.saveItem(taggedItem)
-            NSLog("💾 Successfully saved item to storage: \(persistedItem.content.contentType)")
 
-            // Enforce max history items limit from settings
-            let maxItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
-            if maxItems > 0 {
-                try? await storageService.enforceMaxItems(max: maxItems)
+            // Enforce max history items limit from settings (every 50 captures)
+            capturesSinceLastEnforce += 1
+            if capturesSinceLastEnforce >= 50 {
+                capturesSinceLastEnforce = 0
+                let maxItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
+                if maxItems > 0 {
+                    try? await storageService.enforceMaxItems(max: maxItems)
+                }
             }
 
             // Update statistics
@@ -254,7 +246,40 @@ public class ClipboardMonitorService {
 
             // Notify subscribers
             itemSubject.send(persistedItem)
-            NSLog("📢 Notified subscribers about new item")
+
+            // Asynchronously fetch URL metadata after the item is already saved
+            if case .link(let linkContent) = persistedItem.content, linkContent.title == nil {
+                let itemId = persistedItem.id
+                let url = linkContent.url
+                let storage = self.storageService
+                let subject = self.itemSubject
+                Task { [weak self] in
+                    guard let self else { return }
+                    let (title, description, favicon, preview) = await self.fetchURLMetadata(url)
+                    let updatedContent = ClipboardContent.link(LinkContent(
+                        url: url,
+                        title: title ?? url.absoluteString,
+                        description: description,
+                        faviconData: favicon,
+                        previewImageData: preview
+                    ))
+                    let updatedItem = ClipboardItem(
+                        id: itemId,
+                        content: updatedContent,
+                        metadata: persistedItem.metadata,
+                        source: persistedItem.source,
+                        timestamps: persistedItem.timestamps,
+                        security: persistedItem.security,
+                        collectionIds: persistedItem.collectionIds,
+                        tagIds: persistedItem.tagIds,
+                        isFavorite: persistedItem.isFavorite,
+                        isPinned: persistedItem.isPinned,
+                        isDeleted: persistedItem.isDeleted
+                    )
+                    try? await storage.updateItem(updatedItem)
+                    subject.send(updatedItem)
+                }
+            }
 
             return persistedItem
 
@@ -289,11 +314,6 @@ public class ClipboardMonitorService {
         guard let types = pasteboard.types, !types.isEmpty else { return nil }
 
         // Enhanced debug logging to understand what types are present
-        NSLog("🔍 Clipboard types found: \(types.map { $0.rawValue })")
-        NSLog("🔍 .string type resolves to: \(NSPasteboard.PasteboardType.string.rawValue)")
-        NSLog("🔍 .URL type resolves to: \(NSPasteboard.PasteboardType.URL.rawValue)")
-        NSLog("🔍 types.contains(.string): \(types.contains(.string))")
-        NSLog("🔍 types.contains(.URL): \(types.contains(.URL))")
 
         // Check for file URLs specifically
         if types.contains(.fileURL) {
@@ -307,16 +327,13 @@ public class ClipboardMonitorService {
         if types.contains(.string) {
             if let stringContent = pasteboard.string(forType: .string) {
                 let preview = stringContent.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100)
-                NSLog("📄 String content preview: \"\(preview)\"")
 
                 // Test URL detection
                 let isURL = stringContent.isValidURL
-                NSLog("🔗 URL detection result: \(isURL) for content: \(preview)")
             }
         }
 
         var content: ClipboardContent?
-        NSLog("🚀 About to enter content processing branches")
 
         // Check for Chrome-specific URL type
         let chromeURLType = NSPasteboard.PasteboardType("org.chromium.source-url")
@@ -334,12 +351,10 @@ public class ClipboardMonitorService {
                 let cleanedChromeURL = chromeURL.trimmingCharacters(in: .whitespacesAndNewlines)
                 // Only process as URL if the text content IS the URL (user copied URL itself)
                 shouldProcessAsURL = cleanedString == cleanedChromeURL
-                NSLog("🔍 Chrome URL check: string '\(cleanedString.prefix(50))' vs URL '\(cleanedChromeURL.prefix(50))' -> match: \(shouldProcessAsURL)")
             }
         }
 
         // FIXED priority order: Check native URLs first (including Chrome URLs when appropriate), then intelligent file/image detection, then text with URL detection
-        NSLog("🔍 Checking .URL: \(types.contains(.URL)), Chrome URL: \(hasChromeURL), shouldProcessAsURL: \(shouldProcessAsURL)")
         if shouldProcessAsURL {
             print("🔗 Processing as native URL content")
             content = await processURLContent(pasteboard, chromeType: hasChromeURL ? chromeURLType : nil)
@@ -364,26 +379,20 @@ public class ClipboardMonitorService {
         // If content not set yet, check for pasteboard image types
         if content == nil && (types.contains(.png) || types.contains(.tiff)) {
             // Handle images - ALWAYS process as images, regardless of whether they have fileURL
-            NSLog("🔍 Checking .png/.tiff: \(types.contains(.png)) / \(types.contains(.tiff))")
             print("🖼️ Processing as image content (pasteboard types)")
             content = await processImageContent(pasteboard)
         }
 
         if content == nil, types.contains(.rtf) {
-            NSLog("🔍 Checking .rtf: \(types.contains(.rtf))")
             print("📝 Processing as rich text content")
             content = await processRichTextContent(pasteboard)
         }
 
         if content == nil, types.contains(.string) {
-            NSLog("🔍 Checking .string: \(types.contains(.string))")
-            NSLog("📄 Processing as text content - about to call processTextContent")
             content = await processTextContent(pasteboard) // This will detect URLs in text
-            NSLog("📄 Returned from processTextContent: \(content != nil ? "SUCCESS" : "NIL")")
         }
 
         if content == nil, types.contains(.color) {
-            NSLog("🔍 Checking .color: \(types.contains(.color))")
             print("🎨 Processing as color content")
             content = await processColorContent(pasteboard)
         }
@@ -393,44 +402,34 @@ public class ClipboardMonitorService {
             content = await processGenericContent(pasteboard, types: types)
         }
 
-        NSLog("🔍 After content processing, content is: \(content != nil ? "NOT NIL" : "NIL")")
         if let clipboardContent = content {
-            NSLog("✅ Content classified as: \(clipboardContent.contentType)")
         } else {
-            NSLog("❌ Failed to process clipboard content")
             return nil
         }
 
         guard let clipboardContent = content else {
-            NSLog("❌ Content guard failed - returning nil")
             return nil
         }
 
-        NSLog("🚀 About to generate metadata for content")
 
         let metadata = ItemMetadata.generate(for: clipboardContent)
-        NSLog("✅ Generated metadata successfully")
 
         let source = await getCurrentApplicationInfo()
-        NSLog("✅ Got application info")
 
         let finalItem = ClipboardItem(
             content: clipboardContent,
             metadata: metadata,
             source: source
         )
-        NSLog("✅ Created final ClipboardItem successfully")
 
         return finalItem
     }
 
     private func processTextContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
-        NSLog("🚀 ENTERED processTextContent method")
         guard let text = pasteboard.string(forType: .string) else {
             print("❌ No string content in pasteboard")
             return nil
         }
-        NSLog("✅ Got text from pasteboard: \(text.prefix(50))")
 
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         print("📄 Text content: \"\(trimmedText.prefix(50))\"")
@@ -438,12 +437,10 @@ public class ClipboardMonitorService {
         // PRIORITY 1: Check if it's a hex color code BEFORE URL detection
         // This prevents hex codes like #000000 from being detected as URLs
         if trimmedText.isValidColor {
-            NSLog("🎨 Detected hex color: \(trimmedText)")
             if let color = NSColor(hexString: trimmedText) {
                 print("🎨 Successfully created NSColor from hex string")
                 return .color(ColorContent(nsColor: color))
             } else {
-                NSLog("❌ Failed to create NSColor from valid hex string: \(trimmedText)")
             }
         }
 
@@ -458,29 +455,18 @@ public class ClipboardMonitorService {
         print("📊 URL Debug - hasHttps: \(hasHttps), hasHttp: \(hasHttp), canCreateURL: \(canCreateURL)")
 
         // PRIORITY 2: Check if it's a URL - prioritize URL detection
-        NSLog("🔍 About to check URL conversion: isValidURL=\(trimmedText.isValidURL)")
         if trimmedText.isValidURL {
             // Clean the text by removing newlines (for multi-line URLs from browsers)
             let cleanedText = trimmedText.components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .joined()
-            NSLog("🧹 Cleaned text for URL creation: \(cleanedText.prefix(100))")
 
             if let url = URL(string: cleanedText) {
-                NSLog("🔗 SUCCESS: Converting text to link content for URL: \(url)")
-                let (title, description, favicon, preview) = await fetchURLMetadata(url)
-                return .link(LinkContent(
-                    url: url,
-                    title: title ?? url.absoluteString,
-                    description: description,
-                    faviconData: favicon,
-                    previewImageData: preview
-                ))
+                // Return immediately with just the URL — metadata is fetched asynchronously after save
+                return .link(LinkContent(url: url))
             } else {
-                NSLog("❌ URL creation failed even after cleaning - treating as plain text")
             }
         } else {
-            NSLog("❌ URL validation failed - treating as plain text")
         }
 
         let textContent = TextContent(
@@ -497,7 +483,6 @@ public class ClipboardMonitorService {
         // }
 
         let result: ClipboardContent = .text(textContent)
-        NSLog("📤 processTextContent returning: \(result)")
         return result
     }
 
@@ -652,7 +637,6 @@ public class ClipboardMonitorService {
         var urlString: String? = nil
         if let chromeType = chromeType {
             urlString = pasteboard.string(forType: chromeType)
-            NSLog("🔗 Got URL from Chrome type: \(urlString ?? "nil")")
         }
 
         // Fallback to standard URL type
@@ -661,24 +645,12 @@ public class ClipboardMonitorService {
         }
 
         guard let urlStr = urlString, let url = URL(string: urlStr) else {
-            NSLog("❌ Failed to get URL from pasteboard")
             return nil
         }
 
-        NSLog("🔗 Processing URL content: \(url.absoluteString)")
 
-        // Fetch metadata from HTML (OG tags, title, favicon, preview image)
-        NSLog("🌐 Starting metadata fetch for: \(url.absoluteString)")
-        let (title, description, favicon, preview) = await fetchURLMetadata(url)
-        NSLog("🌐 Metadata fetch complete — title: \(title ?? "nil"), desc: \(description?.prefix(40) ?? "nil"), favicon: \(favicon?.count ?? 0) bytes, preview: \(preview?.count ?? 0) bytes")
-
-        return .link(LinkContent(
-            url: url,
-            title: title ?? url.absoluteString,
-            description: description,
-            faviconData: favicon,
-            previewImageData: preview
-        ))
+        // Return immediately with just the URL — metadata fetched async after save
+        return .link(LinkContent(url: url))
     }
 
     private func processColorContent(_ pasteboard: NSPasteboard) async -> ClipboardContent? {
@@ -731,7 +703,6 @@ public class ClipboardMonitorService {
             if let frontWindow = workspace.frontmostApplication,
                frontWindow.bundleIdentifier != clipFlowBundleID {
                 targetApp = frontWindow
-                NSLog("📱 Using frontmost application fallback")
             }
         }
 
@@ -744,15 +715,17 @@ public class ClipboardMonitorService {
                 app.bundleIdentifier != "com.apple.WindowManager"
             })
             if targetApp != nil {
-                NSLog("📱 Using any running app fallback")
             }
         }
 
         // If we found an app, compress and return its info
         if let frontApp = targetApp {
-            // Compress icon to reasonable size (TIFF can be huge for retina icons)
+            // Compress icon to reasonable size, cached per bundle ID
             var iconData: Data? = nil
-            if let icon = frontApp.icon {
+            if let bundleID = frontApp.bundleIdentifier,
+               let cached = Self.iconCache[bundleID] {
+                iconData = cached
+            } else if let icon = frontApp.icon {
                 // Resize icon to standard 128x128 and convert to PNG for smaller size
                 let targetSize = NSSize(width: 128, height: 128)
                 let resizedIcon = NSImage(size: targetSize)
@@ -768,7 +741,9 @@ public class ClipboardMonitorService {
                    let bitmapRep = NSBitmapImageRep(data: tiffData),
                    let pngData = bitmapRep.representation(using: .png, properties: [:]) {
                     iconData = pngData
-                    NSLog("🎨 Compressed icon: \(frontApp.localizedName ?? "Unknown") from \(frontApp.icon?.tiffRepresentation?.count ?? 0) to \(pngData.count) bytes")
+                    if let bundleID = frontApp.bundleIdentifier {
+                        Self.iconCache[bundleID] = pngData
+                    }
                 }
             }
 
@@ -778,12 +753,10 @@ public class ClipboardMonitorService {
                 applicationIcon: iconData
             )
 
-            NSLog("📱 Captured source app: \(source.applicationName ?? "Unknown") (\(source.applicationBundleID ?? "nil"))")
             return source
         }
 
         // Absolute fallback: Return System as the source with a generic icon
-        NSLog("⚠️ No valid application found - using System fallback")
 
         // Create a generic system icon
         var systemIconData: Data? = nil

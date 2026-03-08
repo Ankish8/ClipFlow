@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ClipFlowCore
 
 /// Horizontal chip bar for app filtering
@@ -7,8 +8,19 @@ struct AppChipBarView: View {
     @Binding var selectedApps: Set<String>
     @Environment(\.colorScheme) var colorScheme
 
-    // Collect unique apps from clipboard items
-    private var appList: [AppChip] {
+    // PERFORMANCE: Cache appList and icon images to avoid O(n) dict+sort and NSImage(data:) per render
+    @State private var cachedAppList: [AppChip] = []
+    @State private var iconCache: [String: Image] = [:]
+
+    private var displayedApps: [AppChip] {
+        Array(cachedAppList.prefix(5))
+    }
+
+    private var hasMoreApps: Bool {
+        cachedAppList.count > 5
+    }
+
+    private func rebuildAppList() {
         var appMap: [String: AppChip] = [:]
 
         for item in items {
@@ -31,15 +43,20 @@ struct AppChipBarView: View {
             }
         }
 
-        return appMap.values.sorted { $0.count > $1.count }
-    }
+        cachedAppList = appMap.values.sorted { $0.count > $1.count }
 
-    private var displayedApps: [AppChip] {
-        Array(appList.prefix(5)) // Show top 5 apps
-    }
-
-    private var hasMoreApps: Bool {
-        appList.count > 5
+        // Decode icons off main path for any new bundle IDs
+        for app in cachedAppList where iconCache[app.bundleID] == nil {
+            if let iconData = app.icon {
+                let bid = app.bundleID
+                Task.detached(priority: .utility) {
+                    if let nsImage = NSImage(data: iconData) {
+                        let img = Image(nsImage: nsImage)
+                        await MainActor.run { iconCache[bid] = img }
+                    }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -61,6 +78,8 @@ struct AppChipBarView: View {
             .padding(.horizontal, 32)
         }
         .frame(height: 32)
+        .onAppear { rebuildAppList() }
+        .onChange(of: items) { _, _ in rebuildAppList() }
     }
 
     private var allChip: some View {
@@ -93,10 +112,9 @@ struct AppChipBarView: View {
             }
         }) {
             HStack(spacing: 6) {
-                // App icon
-                if let iconData = app.icon,
-                   let nsImage = NSImage(data: iconData) {
-                    Image(nsImage: nsImage)
+                // App icon (cached)
+                if let cachedIcon = iconCache[app.bundleID] {
+                    cachedIcon
                         .resizable()
                         .interpolation(.high)
                         .antialiased(true)
@@ -136,7 +154,7 @@ struct AppChipBarView: View {
             // TODO: Show full app list
         }) {
             HStack(spacing: 4) {
-                Text("+\(appList.count - 5)")
+                Text("+\(cachedAppList.count - 5)")
                     .font(.system(size: 12, weight: .medium))
 
                 Image(systemName: "chevron.down")

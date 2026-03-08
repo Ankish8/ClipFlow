@@ -89,9 +89,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Run auto-delete cleanup before starting monitoring
         let autoDeleteDays = UserDefaults.standard.integer(forKey: "autoDeleteAfterDays")
+        NSLog("⚙️ Auto-delete setting on startup: \(autoDeleteDays) days (\(autoDeleteDays == 0 ? "Forever" : autoDeleteDays == 1 ? "Day" : autoDeleteDays == 7 ? "Week" : autoDeleteDays == 30 ? "Month" : autoDeleteDays == 365 ? "Year" : "\(autoDeleteDays)d"))")
         if autoDeleteDays > 0 {
             do {
                 try await ClipboardService.shared.deleteItemsOlderThan(days: autoDeleteDays)
+                // Reload ViewModel so in-memory state matches DB after deletions.
+                // Without this, the initial loadPage results (run during initializeServices)
+                // become stale and any subsequent DB query (tag filter, search) "loses" items.
+                OverlayManager.shared.refreshData()
             } catch {
                 NSLog("⚠️ Auto-delete cleanup failed: \(error.localizedDescription)")
             }

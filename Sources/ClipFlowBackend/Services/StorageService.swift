@@ -129,10 +129,6 @@ public class StorageService {
             // Load large content from disk if needed
             item = await loadLargeContent(item)
 
-            // Update access time
-            item.timestamps.markAccessed()
-            try await databaseManager.updateItem(item)
-
             // Cache for future access
             await cacheManager.cacheItem(item, hash: item.metadata.hash)
 
@@ -297,16 +293,42 @@ public class StorageService {
     /// Delete items older than a given number of days. Pinned items are preserved.
     public func deleteItemsOlderThan(days: Int) async throws {
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        // IMPORTANT: Pass as timeIntervalSince1970 (Double) to match the numeric
+        // format used in the created_at column. Passing a Date object would encode
+        // as TEXT via GRDB, and SQLite considers numbers < text (always true!).
+        let cutoffTimestamp = cutoff.timeIntervalSince1970
         let idStrings = try await databaseManager.read { db in
             try String.fetchAll(db, sql: """
                 SELECT id FROM clipboard_items
                 WHERE is_deleted = 0 AND is_pinned = 0 AND created_at < ?
-                """, arguments: [cutoff])
+                """, arguments: [cutoffTimestamp])
         }
         let ids = idStrings.compactMap { UUID(uuidString: $0) }
         guard !ids.isEmpty else { return }
         try await deleteItems(ids: ids, permanent: true)
         NSLog("🗑️ Auto-deleted \(ids.count) items older than \(days) days")
+    }
+
+    // MARK: - Aggregate Queries
+
+    public func getItemCount(filter: ItemFilter? = nil) async throws -> Int {
+        try await databaseManager.getItemCount(filter: filter)
+    }
+
+    public func getContentTypeCounts() async throws -> [String: Int] {
+        try await databaseManager.getContentTypeCounts()
+    }
+
+    public func getTagItemCounts() async throws -> [UUID: Int] {
+        try await databaseManager.getTagItemCounts()
+    }
+
+    public func getApplicationStats() async throws -> [(bundleId: String, name: String, icon: Data?, count: Int)] {
+        try await databaseManager.getApplicationStats()
+    }
+
+    public func deleteItemsByFilter(olderThan: Date? = nil, excludePinned: Bool = true) async throws {
+        try await databaseManager.deleteItemsByFilter(olderThan: olderThan, excludePinned: excludePinned)
     }
 
     // MARK: - Maintenance Operations

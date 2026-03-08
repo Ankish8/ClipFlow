@@ -12,7 +12,7 @@ public class PerformanceMonitor {
     private let logger = Logger(subsystem: "com.clipflow.backend", category: "performance")
 
     // Configuration
-    private let maxMetricsPerOperation = 1000
+    private let maxMetricsPerOperation = 100
     private let alertThreshold: TimeInterval = 1.0 // 1 second
     private let memoryAlertThreshold: Int64 = 100 * 1024 * 1024 // 100MB
 
@@ -29,7 +29,6 @@ public class PerformanceMonitor {
         block: () async throws -> T
     ) async rethrows -> T {
         let startTime = CFAbsoluteTimeGetCurrent()
-        let memoryBefore = getCurrentMemoryUsage()
 
         activeOperations[operation] = Date()
 
@@ -41,28 +40,24 @@ public class PerformanceMonitor {
             let result = try await block()
 
             let duration = CFAbsoluteTimeGetCurrent() - startTime
-            let memoryAfter = getCurrentMemoryUsage()
-            let memoryDelta = memoryAfter - memoryBefore
 
             await recordMetric(
                 operation: operation,
                 category: category,
                 duration: duration,
-                memoryUsage: memoryDelta,
+                memoryUsage: 0,
                 success: true
             )
 
             return result
         } catch {
             let duration = CFAbsoluteTimeGetCurrent() - startTime
-            let memoryAfter = getCurrentMemoryUsage()
-            let memoryDelta = memoryAfter - memoryBefore
 
             await recordMetric(
                 operation: operation,
                 category: category,
                 duration: duration,
-                memoryUsage: memoryDelta,
+                memoryUsage: 0,
                 success: false,
                 error: error
             )
@@ -82,13 +77,12 @@ public class PerformanceMonitor {
         }
 
         let duration = Date().timeIntervalSince(startTime)
-        let memoryUsage = getCurrentMemoryUsage()
 
         await recordMetric(
             operation: operation,
             category: "manual",
             duration: duration,
-            memoryUsage: memoryUsage,
+            memoryUsage: 0,
             success: success,
             error: error
         )
@@ -298,10 +292,13 @@ public class PerformanceMonitor {
         return result == KERN_SUCCESS ? Int64(info.resident_size) : 0
     }
 
+    private var reportingTask: Task<Void, Never>?
+
     private func startPeriodicReporting() {
-        Task {
-            while true {
-                try? await Task.sleep(nanoseconds: 300 * 1_000_000_000) // 5 minutes
+        reportingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000_000) // 5 minutes
+                guard !Task.isCancelled else { break }
                 await logPeriodicSummary()
             }
         }

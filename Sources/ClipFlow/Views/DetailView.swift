@@ -232,7 +232,7 @@ struct FileContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(content.urls.enumerated()), id: \.offset) { index, url in
+            ForEach(Array(content.urls.enumerated()), id: \.element.absoluteString) { index, url in
                 HStack {
                     Image(systemName: "doc")
                         .foregroundStyle(.orange)
@@ -348,7 +348,7 @@ struct MultipleContentView: View {
             Text("Multiple items (\(content.items.count))")
                 .font(.headline)
 
-            ForEach(Array(content.items.enumerated()), id: \.offset) { index, item in
+            ForEach(Array(content.items.enumerated()), id: \.element) { index, item in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         ContentTypeIcon(content: item)

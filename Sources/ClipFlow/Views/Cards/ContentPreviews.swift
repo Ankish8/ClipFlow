@@ -42,10 +42,11 @@ struct TextPreviewCard: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // Display as regular text
+                let count = content.plainText.count
                 VStack(alignment: .leading, spacing: 8) {
                     // Content title - exact colors from HTML reference
-                    if content.plainText.count > 50 {
-                        Text(String(content.plainText.prefix(40)) + (content.plainText.count > 40 ? "..." : ""))
+                    if count > 50 {
+                        Text(String(content.plainText.prefix(40)) + (count > 40 ? "..." : ""))
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(colorScheme == .light ?
                                 Color(.sRGB, red: 0.118, green: 0.161, blue: 0.231, opacity: 1.0) : // #1e293b
@@ -55,7 +56,7 @@ struct TextPreviewCard: View {
                     }
 
                     // Main content - exact colors from HTML reference
-                    if content.plainText.count <= 50 {
+                    if count <= 50 {
                         Text(content.plainText)
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(colorScheme == .light ?
@@ -88,17 +89,18 @@ struct RichTextPreviewCard: View {
     let content: RichTextContent
 
     var body: some View {
+        let count = content.plainTextFallback.count
         VStack(alignment: .leading, spacing: 8) {
             // Content title
-            if content.plainTextFallback.count > 50 {
-                Text(String(content.plainTextFallback.prefix(40)) + (content.plainTextFallback.count > 40 ? "..." : ""))
+            if count > 50 {
+                Text(String(content.plainTextFallback.prefix(40)) + (count > 40 ? "..." : ""))
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
             }
 
             // Main content
-            if content.plainTextFallback.count <= 50 {
+            if count <= 50 {
                 Text(content.plainTextFallback)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.primary)
@@ -417,7 +419,7 @@ struct MultiPreviewCard: View {
                 .foregroundStyle(.secondary)
 
             // Content type breakdown
-            let contentTypes = content.items.map { $0.contentType }.removingDuplicates()
+            let contentTypes = content.items.map { $0.contentType }.removingDuplicates().sorted()
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(contentTypes.prefix(4), id: \.self) { type in
                     HStack(spacing: 4) {

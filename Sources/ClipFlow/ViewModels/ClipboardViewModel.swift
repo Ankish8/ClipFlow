@@ -13,12 +13,23 @@ class ClipboardViewModel {
     var statistics: ClipboardStatistics?
     var preferredTintTagIDs: [UUID: UUID] = [:]
 
+    // Pagination state
+    var activeFilter: ItemFilter? = nil
+    var totalFilteredCount: Int = 0
+    var hasMore: Bool = true
+    private let pageSize = 50
+
     @ObservationIgnored private var cancellables = Set<AnyCancellable>()
     @ObservationIgnored private let clipboardService = ClipboardService.shared
+    @ObservationIgnored private var filterDebounceTask: Task<Void, Never>?
+    @ObservationIgnored private var pageLoadTask: Task<Void, Never>?
+    /// Monotonically increasing counter to discard stale query results.
+    @ObservationIgnored private var filterGeneration: Int = 0
 
     // Drag protection
     @ObservationIgnored private var isDragInProgress = false
     @ObservationIgnored private var itemsBackup: [ClipboardItem] = []
+    @ObservationIgnored nonisolated(unsafe) private var dragObservers: [NSObjectProtocol] = []
 
     // O(1) duplicate detection — kept in sync with items array
     @ObservationIgnored private var itemIdSet = Set<UUID>()
@@ -80,19 +91,55 @@ class ClipboardViewModel {
             items.removeAll { $0.metadata.hash == item.metadata.hash }
         }
 
-        // Genuinely new item — add at front.
-        items.insert(item, at: 0)
+        // If a filter is active, only insert if the item matches
+        if let filter = activeFilter {
+            guard itemMatchesFilter(item, filter: filter) else { return }
+        }
+
+        // Genuinely new item — add at front (after pinned items if not pinned).
+        if item.isPinned {
+            items.insert(item, at: 0)
+        } else {
+            // Insert after the last pinned item
+            let insertIndex = items.firstIndex(where: { !$0.isPinned }) ?? items.count
+            items.insert(item, at: insertIndex)
+        }
         reconcilePreferredTint(for: item)
         itemIdSet.insert(item.id)
         itemHashSet.insert(item.metadata.hash)
+        totalFilteredCount += 1
 
-        let maxItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
-        let limit = maxItems > 0 ? maxItems : 100
-        while items.count > limit {
+        // Trim tail to keep memory bounded (keep ~200 items max in memory)
+        let memoryLimit = 200
+        while items.count > memoryLimit {
             let removed = items.removeLast()
             itemIdSet.remove(removed.id)
             itemHashSet.remove(removed.metadata.hash)
+            hasMore = true  // We trimmed, so there's more in DB
         }
+    }
+
+    /// Check if an item matches the current active filter (client-side check for new items).
+    private func itemMatchesFilter(_ item: ClipboardItem, filter: ItemFilter) -> Bool {
+        if let contentTypes = filter.contentTypes, !contentTypes.isEmpty {
+            guard contentTypes.contains(item.content.contentType) else { return false }
+        }
+        if let tagIds = filter.tagIds, !tagIds.isEmpty {
+            guard !item.tagIds.isDisjoint(with: tagIds) else { return false }
+        }
+        if let searchQuery = filter.searchQuery, !searchQuery.isEmpty {
+            let q = searchQuery.lowercased()
+            let textMatch = item.content.displayText.lowercased().contains(q)
+            let appMatch = item.source.applicationName?.lowercased().contains(q) ?? false
+            guard textMatch || appMatch else { return false }
+        }
+        if let isPinned = filter.isPinned {
+            guard item.isPinned == isPinned else { return false }
+        }
+        if let isFavorite = filter.isFavorite {
+            guard item.isFavorite == isFavorite else { return false }
+        }
+        return true
     }
 
     private func rebuildSets() {
@@ -103,56 +150,116 @@ class ClipboardViewModel {
     private func handleStatusUpdate(_ status: MonitorStatus) {
         switch status {
         case .monitoring:
-            isLoading = false
-            errorMessage = nil
+            if isLoading != false { isLoading = false }
+            if errorMessage != nil { errorMessage = nil }
         case .error(let error):
-            errorMessage = error.localizedDescription
-            isLoading = false
+            let desc = error.localizedDescription
+            if errorMessage != desc { errorMessage = desc }
+            if isLoading != false { isLoading = false }
         case .stopped, .paused:
-            isLoading = true
+            if isLoading != true { isLoading = true }
         }
     }
 
     private func loadInitialData() {
-        Task {
+        loadPage(reset: true)
+    }
+
+    /// Load a page of items from DB with current activeFilter.
+    /// `reset: true` replaces items (new filter). `reset: false` appends (infinite scroll).
+    func loadPage(reset: Bool) {
+        // Cancel any in-flight page load so we don't apply stale results
+        pageLoadTask?.cancel()
+
+        // Capture a generation number so we can discard results from superseded queries.
+        // This guards against the race where a completed stale query overwrites `items`
+        // just before cancel() is processed.
+        filterGeneration += 1
+        let myGeneration = filterGeneration
+
+        pageLoadTask = Task {
             do {
                 isLoading = true
-                let maxItems = UserDefaults.standard.integer(forKey: "maxHistoryItems")
-                let historyLimit = maxItems > 0 ? maxItems : 100
-                let history = try await clipboardService.getHistory(
-                    offset: 0,
-                    limit: historyLimit,
-                    filter: nil
+                let offset = reset ? 0 : items.count
+                let filter = activeFilter.map { convertToHistoryFilter($0) }
+                let page = try await clipboardService.getHistory(
+                    offset: offset,
+                    limit: pageSize,
+                    filter: filter
                 )
 
-                // Only update items if not currently dragging
+                // Discard if a newer loadPage was triggered while we were awaiting
+                guard !Task.isCancelled, myGeneration == filterGeneration else { return }
+
                 if !isDragInProgress {
-                    // Use freshly loaded history as the source of truth, then append any
-                    // local-only items that were added after the fetch started.
-                    var mergedItems = history
-                    var mergedIds = Set(history.map(\.id))
-                    var mergedHashes = Set(history.map(\.metadata.hash))
-                    for existingItem in items
-                        where !mergedIds.contains(existingItem.id)
-                           && !mergedHashes.contains(existingItem.metadata.hash) {
-                        mergedItems.append(existingItem)
-                        mergedIds.insert(existingItem.id)
-                        mergedHashes.insert(existingItem.metadata.hash)
+                    if reset {
+                        NSLog("📊 loadPage: replacing items. old=\(items.count), new=\(page.count), filter=\(String(describing: filter)), gen=\(myGeneration)")
+                        items = page
+                        rebuildSets()
+                    } else {
+                        // Append, deduplicating
+                        for item in page where !itemIdSet.contains(item.id) {
+                            items.append(item)
+                            itemIdSet.insert(item.id)
+                            itemHashSet.insert(item.metadata.hash)
+                        }
                     }
-                    items = mergedItems
-                    rebuildSets()
-                } else {
-                    print("🛡️ Skipping data update during drag operation")
+                    hasMore = page.count >= pageSize
+                    totalFilteredCount = try await clipboardService.getItemCount(filter: filter)
                 }
 
-                // Load statistics
-                statistics = await clipboardService.getStatistics()
+                guard !Task.isCancelled, myGeneration == filterGeneration else { return }
+
+                if reset {
+                    statistics = await clipboardService.getStatistics()
+                }
                 isLoading = false
             } catch {
-                errorMessage = error.localizedDescription
-                isLoading = false
+                if !Task.isCancelled, myGeneration == filterGeneration {
+                    errorMessage = error.localizedDescription
+                    isLoading = false
+                }
             }
         }
+    }
+
+    /// Build and apply a filter. Immediately triggers a page load (cancelling any in-flight one).
+    /// `contentTypes` should be the resolved set of content type strings (e.g., ["text", "richText"]).
+    func applyFilter(
+        tagIds: Set<UUID>? = nil,
+        contentTypes: [String]? = nil,
+        searchQuery: String? = nil
+    ) {
+        let newFilter: ItemFilter?
+        let hasFilter = !(tagIds?.isEmpty ?? true)
+            || !(contentTypes?.isEmpty ?? true)
+            || !(searchQuery?.isEmpty ?? true)
+
+        if hasFilter {
+            newFilter = ItemFilter(
+                contentTypes: (contentTypes?.isEmpty ?? true) ? nil : contentTypes,
+                tagIds: (tagIds?.isEmpty ?? true) ? nil : tagIds,
+                searchQuery: (searchQuery?.isEmpty ?? true) ? nil : searchQuery
+            )
+        } else {
+            newFilter = nil
+        }
+
+        activeFilter = newFilter
+        loadPage(reset: true)
+    }
+
+    /// Convert ItemFilter to HistoryFilter for the service layer.
+    private func convertToHistoryFilter(_ filter: ItemFilter) -> HistoryFilter {
+        HistoryFilter(
+            contentTypes: filter.contentTypes,
+            applications: filter.applications,
+            dateRange: filter.dateRange,
+            isFavorite: filter.isFavorite,
+            isPinned: filter.isPinned,
+            tagIds: filter.tagIds,
+            searchQuery: filter.searchQuery
+        )
     }
 
     // MARK: - User Actions
@@ -230,25 +337,10 @@ class ClipboardViewModel {
     }
 
     func performFullTextSearch(_ query: String) {
-        guard !query.isEmpty else {
-            loadInitialData()
-            return
-        }
-
-        Task {
-            do {
-                isLoading = true
-                let results = try await clipboardService.search(
-                    query: query,
-                    scope: .all,
-                    limit: 100
-                )
-                items = results
-                isLoading = false
-            } catch {
-                errorMessage = error.localizedDescription
-                isLoading = false
-            }
+        if query.isEmpty {
+            applyFilter(searchQuery: nil)
+        } else {
+            applyFilter(searchQuery: query)
         }
     }
 
@@ -282,24 +374,14 @@ class ClipboardViewModel {
     }
 
     func loadMore() {
-        Task {
-            do {
-                let moreItems = try await clipboardService.getHistory(
-                    offset: items.count,
-                    limit: 50,
-                    filter: nil
-                )
-                items.append(contentsOf: moreItems)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-        }
+        guard hasMore, !isLoading else { return }
+        loadPage(reset: false)
     }
 
     // MARK: - Drag Protection
 
     private func setupDragProtection() {
-        NotificationCenter.default.addObserver(
+        let obs1 = NotificationCenter.default.addObserver(
             forName: .startDragging,
             object: nil,
             queue: .main
@@ -308,8 +390,9 @@ class ClipboardViewModel {
                 self?.handleDragStart()
             }
         }
+        dragObservers.append(obs1)
 
-        NotificationCenter.default.addObserver(
+        let obs2 = NotificationCenter.default.addObserver(
             forName: .stopDragging,
             object: nil,
             queue: .main
@@ -318,6 +401,11 @@ class ClipboardViewModel {
                 self?.handleDragEnd()
             }
         }
+        dragObservers.append(obs2)
+    }
+
+    deinit {
+        dragObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     private func handleDragStart() {
@@ -338,12 +426,29 @@ class ClipboardViewModel {
         }
 
         // Clear backup after a short delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
             self.itemsBackup.removeAll()
         }
     }
 
     // MARK: - Tag Management
+
+    /// Move an item to a tag — removes all existing tags first (single-tag model).
+    func moveItemToTag(tagId: UUID, itemId: UUID) {
+        guard let item = item(withId: itemId) else { return }
+
+        // Remove all existing tags locally first
+        let existingTags = item.tagIds
+        for oldTagId in existingTags {
+            if oldTagId != tagId {
+                removeTagFromItem(tagId: oldTagId, itemId: itemId)
+            }
+        }
+
+        // Add the new tag (skips if already applied)
+        addTagToItem(tagId: tagId, itemId: itemId)
+    }
 
     func addTagToItem(tagId: UUID, itemId: UUID) {
         let alreadyTagged = item(withId: itemId)?.tagIds.contains(tagId) ?? false
@@ -404,38 +509,8 @@ class ClipboardViewModel {
     // MARK: - Tag Filtering
 
     /// Whether the current items array was loaded via tag filter (DB-backed).
-    var isTagFiltered = false
-
-    /// Load items matching the given tag IDs directly from the database.
-    /// When `tagIds` is empty, reverts to normal history.
-    func loadItemsByTag(tagIds: Set<UUID>) {
-        guard !tagIds.isEmpty else {
-            if isTagFiltered {
-                isTagFiltered = false
-                loadInitialData()
-            }
-            return
-        }
-        Task {
-            do {
-                isLoading = true
-                var merged: [UUID: ClipboardItem] = [:]
-                for tagId in tagIds {
-                    let tagItems = try await ClipFlowBackend.TagService.shared.getItemsForTag(tagId: tagId)
-                    for item in tagItems {
-                        merged[item.id] = item
-                    }
-                }
-                // Sort newest-first
-                items = merged.values.sorted { $0.timestamps.createdAt > $1.timestamps.createdAt }
-                rebuildSets()
-                isTagFiltered = true
-                isLoading = false
-            } catch {
-                errorMessage = error.localizedDescription
-                isLoading = false
-            }
-        }
+    var isTagFiltered: Bool {
+        activeFilter?.tagIds != nil
     }
 
     func filteredItems(byTags tagIds: Set<UUID>) -> [ClipboardItem] {
@@ -469,15 +544,11 @@ class ClipboardViewModel {
             return
         }
 
-        var updatedItems = items
-        var updatedItem = updatedItems[index]
         if isAdding {
-            updatedItem.tagIds.insert(tagId)
+            items[index].tagIds.insert(tagId)
         } else {
-            updatedItem.tagIds.remove(tagId)
+            items[index].tagIds.remove(tagId)
         }
-        updatedItems[index] = updatedItem
-        items = updatedItems
     }
 
     // MARK: - Copy to Clipboard (no paste)

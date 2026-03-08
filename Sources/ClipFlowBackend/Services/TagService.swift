@@ -117,6 +117,7 @@ public class TagService {
     // MARK: - Batch Operations
 
     /// Add multiple tags to an item
+    /// TODO: Batch into a single DB write when DatabaseManager supports it
     public func addTagsToItem(tagIds: [UUID], itemId: UUID) async throws {
         for tagId in tagIds {
             try await database.addTagToItem(tagId: tagId, itemId: itemId)

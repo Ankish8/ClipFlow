@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Building and Running
 ```bash
-# Build debug version
+# Build debug version (SPM)
 swift build
 
 # Build release version
@@ -17,140 +17,110 @@ swift build --configuration release
 
 # Clean build artifacts
 swift package clean
+
+# Generate Xcode project (required after cloning)
+xcodegen generate
 ```
 
-### Development Build Flags
-The project uses several Swift 6 compatibility flags in Package.swift:
-- `-Xfrontend -disable-availability-checking` for development builds
-- `-parse-as-library` for executable target configuration
-- `DISABLE_SENDABLE_CHECKING` compilation flag for concurrency migration
+### Dual Build System
+- **xcodegen** (`project.yml`) is the source of truth for Xcode project settings. `ClipFlow.xcodeproj` is gitignored — regenerate with `xcodegen generate`.
+- **Package.swift** is maintained for `swift build` CLI compatibility.
+- Both target **macOS 26** (Swift tools version 6.2).
+
+### Critical Build Flags (ClipFlow target)
+- `-parse-as-library` — required because `main.swift` uses `@main struct ClipFlowApp`, which conflicts with Swift's special entry-point treatment of `main.swift`
+- `DISABLE_SENDABLE_CHECKING` — migration flag for Swift 6 strict concurrency
+- `ENABLE_DEBUG_DYLIB = YES` — enables SwiftUI Previews (xcodegen only)
 
 ### Testing
-This project currently has no formal test suite. Testing is done manually by:
-1. Building and running the application
-2. Testing clipboard monitoring functionality
-3. Verifying menu bar and overlay interfaces
-4. Checking accessibility permissions flow
+No formal test suite. Manual testing: build and run, verify clipboard monitoring, overlay (⌥⌘V), menu bar, and accessibility permissions.
 
 ## Architecture Overview
 
-### Module Structure and Dependencies
-ClipFlow uses a layered architecture with clear separation of concerns:
-
+### Module Dependency Graph
 ```
-ClipFlow (executable)
-    ↓ depends on
-ClipFlowBackend (services layer)
-    ↓ depends on
-ClipFlowAPI (protocols/interfaces)
-    ↓ depends on
-ClipFlowCore (models/data structures)
+ClipFlow (executable — UI, AppDelegate, views, managers)
+    ↓
+ClipFlowBackend (services — ClipboardService, StorageService, monitoring, cache, tags, OCR)
+    ↓
+ClipFlowAPI (protocols — ClipboardServiceAPI, HistoryFilter, TransformAction)
+    ↓
+ClipFlowCore (models — ClipboardItem, ClipboardContent, Collection, Tag, ItemMetadata)
 ```
-
-### Key Architectural Patterns
-
-**Actor-Based Concurrency**: Uses @MainActor classes for UI components and data race prevention. The architecture transitions from actor-based monitoring to @MainActor class implementation for Swift 6 compatibility.
-
-**Protocol-Oriented Design**: ClipboardServiceAPI defines the contract for clipboard operations, implemented by ClipboardService in the backend layer.
-
-**Reactive Publishers**: Uses Combine framework with PassthroughSubject and CurrentValueSubject for real-time updates between clipboard monitoring and UI components.
-
-**Menu Bar Application**: Runs as NSApplication.accessory (no dock icon) with:
-- Menu bar status item for quick access
-- Global hotkey overlay (⌥⌘V) via KeyboardShortcuts library
-- SwiftUI views embedded in AppKit infrastructure
+External deps: GRDB (SQLite), KeyboardShortcuts (global hotkey)
 
 ### Core Data Flow
+1. **ClipboardMonitorService** polls `NSPasteboard` every 150ms (configurable via `pollingInterval` UserDefaults key), detecting changes via `changeCount`
+2. **StorageService** persists to SQLite via GRDB (`DatabaseRecords.swift` maps domain models ↔ database records)
+3. **ClipboardService** coordinates monitoring, storage, and exposes Combine publishers (`PassthroughSubject`/`CurrentValueSubject`) consumed by UI
+4. **ClipboardViewModel** subscribes to publishers and drives SwiftUI views
+5. **MenuBarManager** / **OverlayManager** handle UI presentation; **AccessibilityManager** manages macOS permissions
 
-1. **ClipboardMonitorService** polls NSPasteboard every 100ms using changeCount detection
-2. **StorageService** persists items using GRDB.swift SQLite database with custom record mappings
-3. **ClipboardService** coordinates between monitoring, storage, and UI layers
-4. **MenuBarManager/OverlayManager** handle UI presentation and user interactions
-5. **AccessibilityManager** manages macOS permissions for global hotkeys and system integration
+### Inter-Manager Communication
+Managers communicate via `NotificationCenter` notifications (not direct calls):
+- `.showClipboardOverlay` / `.hideClipboardOverlay` — toggle overlay visibility
+- `.navigateOverlayLeft` / `.navigateOverlayRight` — arrow key card navigation
+- `.navigateOverlayLeftExtend` / `.navigateOverlayRightExtend` — shift+arrow multi-select
+- `.toggleQuickLook` — spacebar Quick Look preview
 
-### Critical Implementation Details
+### Overlay Window Architecture
+The overlay is an **NSPanel** (not NSWindow) with `[.borderless, .nonactivatingPanel]` style:
+- **Non-activating**: becomes key without stealing focus from the user's active app
+- **Slide-up animation**: from below screen to `screen.visibleFrame` bottom with spring timing
+- **`ClipboardOverlayWindow.sendEvent(_:)`** intercepts keyboard events before SwiftUI text fields consume them (arrow keys, spacebar, number keys, Enter, Escape)
+- **`BorderlessHostingView`**: strips focus rings and borders that AppKit adds to NSHostingView
+- **Click-outside dismiss**: dual event monitors (local + global) detect clicks outside the panel
+- **Focus restoration**: captures `NSWorkspace.shared.frontmostApplication` before showing, restores on hide
 
-**Concurrency Model**: All UI managers are @MainActor isolated. Clipboard monitoring happens on background queues but publishes updates to MainActor for UI consumption. Swift 6 strict concurrency requires careful await/async patterns throughout.
+### Liquid Glass (macOS 26)
+The overlay uses `NSGlassEffectView` for Liquid Glass compositing:
+- Window must be key (`makeKeyAndOrderFront`) for live glass rendering
+- Cards use `Color.primary.opacity(0.07)` fill — not `.regularMaterial` (avoids double-blur)
+- Collection behavior: `[.canJoinAllSpaces, .fullScreenAuxiliary]` — no `.stationary` (would freeze glass after ~2s)
 
-**Application Lifecycle**: AppDelegate initializes services in sequence during `applicationDidFinishLaunching`:
-- Core service initialization
-- Permission checking and request flow
-- Clipboard monitoring startup
-- Cache warmup and performance monitoring
+### Settings Window Pattern (LSUIElement App)
+Since ClipFlow runs as `NSApp.setActivationPolicy(.accessory)` (no dock icon), settings requires special handling:
+- Temporarily switch to `.regular` activation policy (shows dock icon) so window survives click-away
+- Revert to `.accessory` in `windowWillClose`
+- Uses `NavigationSplitView` (not `TabView`, which breaks in NSHostingView)
+- Window level must be `.normal` (not `.floating` — floating breaks window tiling on macOS 26)
 
-**Permission Requirements**: Requires accessibility permissions for:
-- Global hotkey registration (⌥⌘V)
-- Cross-application paste functionality
-- Clipboard monitoring across all apps
+### Application Lifecycle
+`AppDelegate.applicationDidFinishLaunching` initializes in sequence:
+1. `NSApp.setActivationPolicy(.accessory)` — hide dock icon
+2. Initialize managers (all singletons: `.shared`)
+3. Check/request accessibility permissions
+4. Start clipboard monitoring with configured polling interval
+5. Run auto-delete cleanup (based on `autoDeleteAfterDays` UserDefaults)
+6. Warm cache, start 30s performance metric logging loop
 
-**Database Schema**: Uses GRDB with DatabaseRecords.swift defining custom record types that map to/from domain models. The StorageService handles all database operations.
+## Content Type System
+Polymorphic `ClipboardContent` enum in ClipFlowCore. Detection in `ClipboardMonitorService` via NSPasteboard type checking:
+- Text → `TextContent` (with email/phone/URL metadata detection via `String+ContentDetection`)
+- Images → `ImageContent` (dimensions, format, thumbnail generation)
+- Files → `FileContent` (from Finder, with size/type)
+- Rich text → `RichTextContent` (preserves formatting)
+- URLs → `LinkContent` (with async metadata fetching via `LinkMetadataService`)
+- Code → language detection via `String+ContentDetection`
+- Colors → hex conversion
 
-**Content Type System**: Polymorphic ClipboardContent enum in ClipFlowCore supports:
-- Text (plain and rich)
-- Images (with thumbnail generation)
-- Files (from Finder drag operations)
-- Links (with metadata extraction)
-- Code snippets (with language detection)
-- Colors (with hex conversion)
-- Multi-content items
-
-### Performance Architecture
-
-**Caching Strategy**: Multi-level caching via CacheManager with memory and disk persistence. Cache warming occurs during app startup with configurable size limits.
-
-**Monitoring Efficiency**: 100ms polling interval with NSPasteboard.changeCount optimization to avoid unnecessary processing.
-
-**Memory Management**: ClipboardItem records are paginated and cached with automatic cleanup of old items.
-
-### Security and Privacy
-
-**V1 Simplified Security**: Security features were removed from v1 implementation to reduce complexity. SecurityMetadata struct exists but contains no active security enforcement.
-
-**Privacy Compliance**: ClipboardMonitorService checks for concealed/transient pasteboard types to avoid capturing password manager data and other sensitive clipboard content.
+## Key Services
+- **TagService** / **AutoTagService**: user-defined and rule-based tagging of clipboard items
+- **OCRService**: text extraction from image clipboard items
+- **SoundManager**: per-event sound effects with user-configurable toggles
+- **CacheManager**: multi-level (memory + disk) caching with configurable size limits
+- **PerformanceMonitor**: runtime metrics logging
 
 ## Important Constraints
 
-### Swift 6 Concurrency
-- Uses strict concurrency checking with DISABLE_SENDABLE_CHECKING flag for migration
-- Requires careful @MainActor annotation for UI components
-- All async operations must properly await on MainActor context
-- Publisher chains must be properly isolated to prevent data races
+### Concurrency Model
+- All UI managers are `@MainActor` isolated
+- Clipboard monitoring on background queues, publishes to MainActor via Combine
+- `DISABLE_SENDABLE_CHECKING` flag active during Swift 6 migration
+- Careful `async`/`await` patterns required throughout
 
-### macOS Integration
-- Minimum macOS 15 target (specified in Package.swift platforms)
-- Uses AppKit for menu bar and accessibility features
-- SwiftUI for modern UI components within AppKit NSApplication framework
-- KeyboardShortcuts library for global hotkey support (⌥⌘V)
+### Privacy
+`ClipboardMonitorService` checks for concealed/transient pasteboard types to skip password manager data and sensitive content.
 
-### Performance Requirements
-- Sub-100ms clipboard detection response times
-- Efficient polling with changeCount-based change detection
-- Multi-level caching (memory and disk) via CacheManager
-- Database operations must be non-blocking on main thread
-
-## Module Responsibilities
-
-**ClipFlowCore**: Pure data models (ClipboardItem, ClipboardContent, Collection, ItemMetadata) with no external dependencies. Contains all value types and enums.
-
-**ClipFlowAPI**: Protocol definitions and API contracts (ClipboardServiceAPI, HistoryFilter, TransformAction). Defines the interface between backend services and UI layer.
-
-**ClipFlowBackend**: Business logic, database operations, monitoring services, and cache management. Contains all service implementations and database schema.
-
-**ClipFlow**: UI layer, application lifecycle, manager coordination, and SwiftUI views. Contains AppDelegate, view models, and all user interface components.
-
-## Content Type Detection
-
-Content detection occurs in ClipboardMonitorService using NSPasteboard type checking:
-- String content becomes TextContent with metadata detection (email, phone, URL)
-- NSImage data becomes ImageContent with dimension and format extraction
-- File URLs become FileContent with size and type information
-- Rich text preserves formatting through RichTextContent
-- URL detection creates LinkContent with potential metadata fetching
-- Code detection uses String+ContentDetection extensions for language identification
-
-## Manager Coordination
-
-The three main managers coordinate application behavior:
-- **MenuBarManager**: Handles status item, popover presentation, and menu interactions
-- **OverlayManager**: Manages global hotkey overlay window and keyboard shortcuts
-- **AccessibilityManager**: Handles permission requests, status checking, and system integration
+### Permission Requirements
+Accessibility permissions required for: global hotkey (⌥⌘V), cross-app paste, clipboard monitoring.
